@@ -120,3 +120,62 @@ test('layout covers the Win key and has no duplicate IDs', () => {
   const right = Math.max(...keys.map((k) => k.x + k.w));
   assert.equal(right, 22.5);
 });
+
+test('tracker estimates input on/off from actuation and release points', () => {
+  const v3 = P.FAMILIES.v3;
+  const t = new P.DepthTracker();
+  // Win: actuation 2.7 mm, release 2.5 mm (as written by the actuation tab).
+  const press = v3.thresholdToRaw(173), release = v3.thresholdToRaw(160);
+  t.setThresholds([[127, { press, release }]]);
+
+  // A light brush that never reaches 2.7 mm: sensed, not an input.
+  t.update([{ id: 127, raw: v3.thresholdToRaw(100) }], 0);
+  t.update([], 20);
+  // A real press: crosses 2.7 mm at t=130, comes back above 2.5 mm at t=200, released at t=220.
+  t.update([{ id: 127, raw: v3.thresholdToRaw(120) }], 100);
+  t.update([{ id: 127, raw: press }], 130);
+  assert.equal(t.active.has(127), true);
+  t.update([{ id: 127, raw: v3.thresholdToRaw(165) }], 160); // between the points: still on
+  assert.equal(t.active.has(127), true);
+  t.update([{ id: 127, raw: release }], 200);
+  assert.equal(t.active.has(127), false);
+  t.update([], 220);
+
+  const [brush, real] = t.events;
+  assert.equal(brush.fired, false);
+  assert.equal(brush.marginRaw, press - v3.thresholdToRaw(100));
+  assert.equal(real.fired, true);
+  assert.equal(real.activations, 1);
+  assert.equal(real.firstOnMs, 30);
+  assert.equal(real.heldMs, 70);
+  assert.equal(t.stats.get(127).activations, 1);
+  assert.deepEqual(t.onSpans.get(127), [[130, 200]]);
+});
+
+test('input that is still on when the key drops out of the stream is closed', () => {
+  const t = new P.DepthTracker();
+  t.setThresholds(new Map([[31, { press: 100, release: 90 }]]));
+  t.update([{ id: 31, raw: 150 }], 0);
+  t.update([], 50);
+  assert.equal(t.active.size, 0);
+  assert.equal(t.events[0].heldMs, 50);
+  assert.deepEqual(t.onSpans.get(31), [[0, 50]]);
+});
+
+test('keys without a known actuation point report fired = null', () => {
+  const t = new P.DepthTracker();
+  t.update([{ id: 18, raw: 40 }], 0);
+  t.update([], 10);
+  assert.equal(t.events[0].fired, null);
+  assert.equal(t.events[0].marginRaw, null);
+});
+
+test('history keeps the recent window plus one earlier sample', () => {
+  const t = new P.DepthTracker({ historyMs: 100 });
+  t.update([{ id: 31, raw: 5 }], 0);
+  t.update([{ id: 31, raw: 6 }], 50);
+  t.update([{ id: 31, raw: 6 }], 60); // unchanged value is not stored twice
+  t.update([{ id: 31, raw: 7 }], 200);
+  assert.deepEqual(t.history.get(31), [[50, 6], [200, 7]]);
+  assert.equal(t.lastId, 31);
+});

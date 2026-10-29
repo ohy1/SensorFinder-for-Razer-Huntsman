@@ -29,6 +29,9 @@
       rawToMm: (raw) => 1.5 + (raw / 255) * 2.1,
       thresholdToMm: (t) => 1.5 + (t / 255) * 2.1,
       mmToThreshold: (mm) => clamp(Math.round(((mm - 1.5) / 2.1) * 255), 0, 255),
+      thresholdToRaw: (t) => t, // depth and thresholds share one byte scale
+      mmToRaw: (mm) => ((mm - 1.5) / 2.1) * 255,
+      gridMm: [1.5, 2, 2.5, 3, 3.5],
       thresholdRangeMm: [1.5, 3.6],
       minReleaseGap: 10, // firmware clamps thrH to thrL - 10
     },
@@ -39,6 +42,9 @@
       rawToMm: (raw) => raw / 16380,
       thresholdToMm: (t) => (t * 256) / 16380,
       mmToThreshold: (mm) => clamp(Math.round((mm * 16380) / 256), 1, 255),
+      thresholdToRaw: (t) => t * 256, // threshold is the high byte of the u16 depth
+      mmToRaw: (mm) => mm * 16380,
+      gridMm: [0, 1, 2, 3, 4],
       thresholdRangeMm: [0.1, 4.0],
       minReleaseGap: 6, // ~0.1 mm; Synapse's own defaults sit 6 apart (76/70)
     },
@@ -172,48 +178,50 @@
    * Tracks per-key live depth, peaks and "touch" events (a key leaving rest and coming back).
    * A touch starts when raw > noiseFloor and ends when the key drops out of the stream
    * or falls to <= noiseFloor.
+   *
+   * With per-key thresholds (raw depth units, see setThresholds) it also estimates when the
+   * key registered as an input: on when depth reaches the actuation point, off when it comes
+   * back to the release point. Rapid Trigger is not modelled.
    */
   class DepthTracker {
-    constructor({ noiseFloor = 0, maxEvents = 1000 } = {}) {
+    constructor({ noiseFloor = 0, maxEvents = 1000, historyMs = 10000 } = {}) {
       this.noiseFloor = noiseFloor;
       this.maxEvents = maxEvents;
+      this.historyMs = historyMs;
+      this.thresholds = new Map(); // id -> {press, release}
       this.reset();
     }
 
     reset() {
       this.live = new Map(); // id -> raw
-      this.stats = new Map(); // id -> {peak, touches, totalMs, firstSeen, lastSeen}
-      this.open = new Map(); // id -> {id, start, peak}
+      this.stats = new Map(); // id -> {peak, touches, activations, totalMs, firstSeen, lastSeen}
+      this.open = new Map(); // id -> {id, start, peak, activations, firstOnMs, heldMs}
+      this.active = new Map(); // id -> time the input turned on
       this.events = []; // finished touches, newest last
+      this.history = new Map(); // id -> [[t, raw], ...] for the last historyMs
+      this.onSpans = new Map(); // id -> [[start, end|null], ...] input-on spans, same window
       this.reports = 0;
+      this.lastId = null; // most recently touched key
+    }
+
+    /** `thresholds`: Map or iterable of [id, {press, release}] in raw depth units. */
+    setThresholds(thresholds) {
+      this.thresholds = new Map(thresholds);
     }
 
     /** Feeds one parsed report; `t` is a timestamp in ms. Returns ids whose touch just ended. */
     update(keys, t) {
       this.reports++;
-      const seen = new Set();
+      const current = new Map();
+      for (const { id, raw } of keys) if (raw > this.noiseFloor) current.set(id, raw);
+      const ids = new Set([...current.keys(), ...this.open.keys(), ...this.active.keys()]);
       const ended = [];
-      for (const { id, raw } of keys) {
-        if (raw <= this.noiseFloor) continue;
-        seen.add(id);
-        this.live.set(id, raw);
-        let s = this.stats.get(id);
-        if (!s) {
-          s = { peak: 0, touches: 0, totalMs: 0, firstSeen: t, lastSeen: t };
-          this.stats.set(id, s);
-        }
-        s.peak = Math.max(s.peak, raw);
-        s.lastSeen = t;
-        let o = this.open.get(id);
-        if (!o) {
-          o = { id, start: t, peak: 0 };
-          this.open.set(id, o);
-          s.touches++;
-        }
-        o.peak = Math.max(o.peak, raw);
-      }
-      for (const id of [...this.open.keys()]) {
-        if (!seen.has(id)) {
+      for (const id of ids) {
+        const raw = current.get(id) || 0;
+        this._record(id, raw, t);
+        if (raw > 0) this._touch(id, raw, t);
+        this._judge(id, raw, t);
+        if (raw === 0 && this.open.has(id)) {
           this._close(id, t);
           ended.push(id);
         }
@@ -221,11 +229,73 @@
       return ended;
     }
 
+    _touch(id, raw, t) {
+      this.live.set(id, raw);
+      let s = this.stats.get(id);
+      if (!s) {
+        s = { peak: 0, touches: 0, activations: 0, totalMs: 0, firstSeen: t, lastSeen: t };
+        this.stats.set(id, s);
+      }
+      s.peak = Math.max(s.peak, raw);
+      s.lastSeen = t;
+      let o = this.open.get(id);
+      if (!o) {
+        o = { id, start: t, peak: 0, activations: 0, firstOnMs: null, heldMs: 0 };
+        this.open.set(id, o);
+        s.touches++;
+        this.lastId = id;
+      }
+      o.peak = Math.max(o.peak, raw);
+    }
+
+    _judge(id, raw, t) {
+      const thr = this.thresholds.get(id);
+      if (!thr) return;
+      const since = this.active.get(id);
+      if (since === undefined && raw > 0 && raw >= thr.press) {
+        this.active.set(id, t);
+        this.stats.get(id).activations++;
+        const o = this.open.get(id);
+        o.activations++;
+        if (o.firstOnMs === null) o.firstOnMs = t - o.start;
+        this._spans(id).push([t, null]);
+      } else if (since !== undefined && raw <= thr.release) {
+        this.active.delete(id);
+        const o = this.open.get(id);
+        if (o) o.heldMs += t - since;
+        const spans = this._spans(id);
+        if (spans.length) spans[spans.length - 1][1] = t;
+      }
+    }
+
+    _spans(id) {
+      let spans = this.onSpans.get(id);
+      if (!spans) this.onSpans.set(id, (spans = []));
+      return spans;
+    }
+
+    _record(id, raw, t) {
+      let h = this.history.get(id);
+      if (!h) this.history.set(id, (h = []));
+      if (!h.length || h[h.length - 1][1] !== raw) h.push([t, raw]);
+      // Keep one sample older than the window so the trace starts at the right level.
+      while (h.length > 1 && h[1][0] < t - this.historyMs) h.shift();
+      const spans = this.onSpans.get(id);
+      while (spans && spans.length && spans[0][1] !== null && spans[0][1] < t - this.historyMs) spans.shift();
+    }
+
     _close(id, t) {
       const o = this.open.get(id);
       this.open.delete(id);
       this.live.delete(id);
-      const ev = { id, start: o.start, end: t, durationMs: t - o.start, peak: o.peak };
+      const thr = this.thresholds.get(id);
+      const ev = {
+        id, start: o.start, end: t, durationMs: t - o.start, peak: o.peak,
+        // null = unknown, because this key's actuation point has not been read.
+        fired: thr ? o.activations > 0 : null,
+        activations: o.activations, firstOnMs: o.firstOnMs, heldMs: o.heldMs,
+        marginRaw: thr ? thr.press - o.peak : null,
+      };
       this.stats.get(id).totalMs += ev.durationMs;
       this.events.push(ev);
       if (this.events.length > this.maxEvents) this.events.shift();
@@ -234,7 +304,7 @@
     /** Keys ranked by how often / how deep they were touched. */
     ranking() {
       return [...this.stats.entries()]
-        .map(([id, s]) => ({ id, ...s, live: this.live.get(id) || 0 }))
+        .map(([id, s]) => ({ id, ...s, live: this.live.get(id) || 0, inputOn: this.active.has(id) }))
         .sort((a, b) => b.touches - a.touches || b.peak - a.peak);
     }
   }

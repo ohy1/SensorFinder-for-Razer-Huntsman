@@ -9,18 +9,19 @@
     --bg: #f6f7f9; --panel: #ffffff; --text: #1b1f24; --muted: #5f6b7a; --border: #d8dde3;
     --key: #eef1f4; --key-text: #2a3038; --accent: #13a10e; --accent-soft: rgba(19, 161, 14, 0.18);
     --warn: #c26a00; --warn-soft: rgba(194, 106, 0, 0.14); --danger: #c62828; --mono: ui-monospace, SFMono-Regular, Consolas, monospace;
+    --sense: #2f6fdf; --grid: #e6e9ed;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       --bg: #111418; --panel: #1a1e24; --text: #e6e9ed; --muted: #97a3b2; --border: #2c333c;
       --key: #242a32; --key-text: #d5dbe2; --accent: #44d62c; --accent-soft: rgba(68, 214, 44, 0.2);
-      --warn: #ffa733; --warn-soft: rgba(255, 167, 51, 0.16); --danger: #ff6b6b;
+      --warn: #ffa733; --warn-soft: rgba(255, 167, 51, 0.16); --danger: #ff6b6b; --sense: #6ea8ff; --grid: #262c34;
     }
   }
   :root[data-theme="dark"] {
     --bg: #111418; --panel: #1a1e24; --text: #e6e9ed; --muted: #97a3b2; --border: #2c333c;
     --key: #242a32; --key-text: #d5dbe2; --accent: #44d62c; --accent-soft: rgba(68, 214, 44, 0.2);
-    --warn: #ffa733; --warn-soft: rgba(255, 167, 51, 0.16); --danger: #ff6b6b;
+    --warn: #ffa733; --warn-soft: rgba(255, 167, 51, 0.16); --danger: #ff6b6b; --sense: #6ea8ff; --grid: #262c34;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif; }
@@ -50,11 +51,22 @@
   .kb { position: relative; width: 100%; min-width: 640px; aspect-ratio: 22.5 / 6.25; }
   .key { position: absolute; padding: 2px; }
   .key > div { position: relative; height: 100%; border-radius: 5px; background: var(--key); border: 1px solid var(--border); overflow: hidden; color: var(--key-text); font-size: 11px; display: flex; align-items: flex-start; justify-content: flex-start; padding: 2px 4px; }
-  .key .fill { position: absolute; left: 0; right: 0; bottom: 0; background: var(--accent); opacity: 0.85; height: 0; }
+  .key .fill { position: absolute; left: 0; right: 0; bottom: 0; background: var(--sense); opacity: 0.75; height: 0; }
+  .key.on .fill { background: var(--accent); opacity: 0.9; }
+  .key .mark { position: absolute; left: 0; right: 0; height: 0; border-top: 2px solid var(--text); opacity: 0.55; z-index: 1; display: none; }
+  .key .mark.rel { border-top: 1px dashed var(--muted); opacity: 0.8; }
   .key .lbl { position: relative; z-index: 1; white-space: nowrap; }
   .key .cnt { position: absolute; right: 3px; bottom: 1px; z-index: 1; font-size: 10px; font-family: var(--mono); color: var(--warn); font-weight: 700; }
   .key.touched > div { border-color: var(--warn); box-shadow: inset 0 0 0 1px var(--warn); background: var(--warn-soft); }
-  .key.live > div { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+  .key.fired > div { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); background: var(--accent-soft); }
+  .key.fired .cnt { color: var(--accent); }
+  .key.live > div { box-shadow: 0 0 0 2px var(--sense); }
+  .key.on > div { box-shadow: 0 0 0 2px var(--accent); }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: -1px; margin-right: 4px; }
+  .chart-wrap { position: relative; height: 240px; }
+  .chart-wrap canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .tip { position: absolute; pointer-events: none; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font-size: 12px; font-family: var(--mono); white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+  .ok { color: var(--accent); font-weight: 600; }
   .key.selected > div { outline: 2px dashed var(--text); outline-offset: -3px; }
 
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
@@ -104,7 +116,21 @@
           <button id="csv">CSV 내보내기</button>
         </div>
       </div>
-      <p class="muted" style="margin-top: 8px">초록 = 지금 눌린 깊이, 주황 테두리 = 기록 중 한 번이라도 감지된 키 (숫자 = 감지 횟수). 키에서 손을 떼고 지켜보거나, 키캡을 하나씩 살짝 건드려 보세요.</p>
+      <div class="row" style="margin-top: 10px">
+        <span>입력/해제 지점</span>
+        <select id="thrProfile">
+          <option value="active">활성 프로필 슬롯</option>
+          <option value="0">프로필 0 (RAM)</option>
+        </select>
+        <button id="thrLoad">키보드에서 불러오기</button>
+        <span id="thrStatus" class="muted">아직 불러오지 않음 — 불러오면 입력이 실제로 됐는지 판정합니다</span>
+      </div>
+      <p class="muted" style="margin-top: 8px">
+        <span class="swatch" style="background: var(--sense)"></span>감지 중(입력 지점 전)
+        <span class="swatch" style="background: var(--accent); margin-left: 10px"></span>입력 중
+        · 테두리: <b style="color: var(--warn)">주황</b> = 감지만 되고 입력된 적 없음(미세 접촉), <b class="ok">초록</b> = 입력된 적 있음 · 숫자 = 감지 횟수
+        · 감지된 키 안의 실선 = 입력 지점, 점선 = 해제 지점. 키를 클릭하면 아래 그래프에 표시됩니다.
+      </p>
       <div class="kb-wrap"><div id="kb" class="kb"></div></div>
       <div id="extraKeys" class="row hidden" style="margin-top: 8px"></div>
       <div id="noStream" class="note hidden">
@@ -113,13 +139,24 @@
       </div>
     </div>
 
+    <div class="panel">
+      <div class="row" style="justify-content: space-between">
+        <h2 id="chartTitle" style="margin: 0">키 깊이 그래프 (최근 5초)</h2>
+        <label><input id="follow" type="checkbox" checked> 최근 감지된 키 따라가기</label>
+      </div>
+      <p id="chartReadout" class="muted" style="margin: 6px 0 8px; font-family: var(--mono)">키를 누르거나 맵에서 키를 클릭하세요.</p>
+      <div id="chartWrap" class="chart-wrap"><canvas id="chart"></canvas><div id="tip" class="tip hidden"></div></div>
+      <p class="muted" style="margin-top: 6px">입력/해제 판정은 불러온 입력·해제 지점으로 계산한 <b>추정</b>입니다. Rapid Trigger는 반영하지 않습니다.</p>
+    </div>
+
     <div class="grid2">
       <div class="panel">
         <h2>감지된 키 순위</h2>
+        <p class="muted" style="font-size: 12px">여유 = 입력 지점 − 최대 깊이. 여유가 남아 있으면 그 키는 한 번도 입력 지점까지 눌리지 않은 것입니다.</p>
         <div class="scroll">
           <table>
-            <thead><tr><th>키</th><th class="num">감지 횟수</th><th class="num">최대 깊이</th><th class="num">현재</th><th class="num">누적 시간</th></tr></thead>
-            <tbody id="ranking"><tr><td colspan="5" class="muted">아직 감지된 키가 없습니다.</td></tr></tbody>
+            <thead><tr><th>키</th><th class="num">감지</th><th class="num">입력</th><th class="num">최대 깊이</th><th class="num">입력 / 해제 지점</th><th class="num">여유</th></tr></thead>
+            <tbody id="ranking"><tr><td colspan="6" class="muted">아직 감지된 키가 없습니다.</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -127,8 +164,8 @@
         <h2>감지 기록 (최신순)</h2>
         <div class="scroll">
           <table>
-            <thead><tr><th>시각</th><th>키</th><th class="num">지속</th><th class="num">최대 깊이</th></tr></thead>
-            <tbody id="events"><tr><td colspan="4" class="muted">기록 없음</td></tr></tbody>
+            <thead><tr><th>시각</th><th>키</th><th class="num">지속</th><th class="num">최대 깊이</th><th>판정</th></tr></thead>
+            <tbody id="events"><tr><td colspan="5" class="muted">기록 없음</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -197,7 +234,11 @@ const state = {
   dirty: true,
   wallOffset: Date.now() - performance.now(),
   streamSeen: false,
+  thresholds: new Map(),  // fwID -> {thrL, thrH} in threshold units
+  chartKey: null,
 };
+
+const CHART_MS = 5000;
 
 // ---------- keyboard map ----------
 const keyEls = new Map();
@@ -212,18 +253,48 @@ function buildKeyboard() {
     el.style.width = (k.w / TOTAL_W * 100) + '%';
     el.style.height = (k.h / TOTAL_H * 100) + '%';
     el.title = `${P.keyName(k.id)} (fwID ${k.id})`;
-    el.innerHTML = `<div><span class="fill"></span><span class="lbl"></span><span class="cnt"></span></div>`;
+    el.innerHTML = `<div><span class="fill"></span><span class="mark"></span><span class="mark rel"></span><span class="lbl"></span><span class="cnt"></span></div>`;
     el.querySelector('.lbl').textContent = P.shortKeyName(k.id);
-    el.addEventListener('click', () => selectActuationKey(k.id));
+    el.addEventListener('click', () => {
+      selectActuationKey(k.id);
+      state.chartKey = k.id;
+      $('follow').checked = false;
+      state.dirty = true;
+    });
     kb.appendChild(el);
     keyEls.set(k.id, el);
   }
 }
 
+function fam() {
+  return P.FAMILIES[state.family || 'v3'];
+}
+
+function mm(raw) {
+  return fam().rawToMm(raw).toFixed(2);
+}
+
 function depthText(raw) {
-  if (!state.family) return String(raw);
-  const f = P.FAMILIES[state.family];
-  return `${raw} (≈${f.rawToMm(raw).toFixed(2)} mm)`;
+  return `≈${mm(raw)} mm`;
+}
+
+/** A difference in raw depth units, in mm. */
+function diffMm(d) {
+  const f = fam();
+  return (f.rawToMm(Math.abs(d)) - f.rawToMm(0)).toFixed(2);
+}
+
+function thrRaw(id) {
+  return state.tracker.thresholds.get(id) || null;
+}
+
+function verdict(e) {
+  if (e.fired === null || e.fired === undefined) return '<span class="muted">지점 미확인</span>';
+  if (e.fired) {
+    const n = e.activations > 1 ? ` ×${e.activations}` : '';
+    return `<span class="ok">입력됨${n}</span> <span class="muted">+${Math.round(e.firstOnMs)} ms, ${fmtMs(e.heldMs)} 유지</span>`;
+  }
+  return `<span style="color: var(--warn)">미입력</span> <span class="muted">${diffMm(e.marginRaw)} mm 모자람</span>`;
 }
 
 function fmtMs(ms) {
@@ -240,6 +311,7 @@ function fmtClock(perfT) {
 }
 
 function render() {
+  if (!$('tab-monitor').classList.contains('hidden')) drawChart();
   if (!state.dirty) return requestAnimationFrame(render);
   state.dirty = false;
   const t = state.tracker;
@@ -249,10 +321,21 @@ function render() {
   for (const [id, el] of keyEls) {
     const live = t.live.get(id) || 0;
     const s = t.stats.get(id);
+    const thr = thrRaw(id);
     el.classList.toggle('live', live > 0);
-    el.classList.toggle('touched', !!s);
+    el.classList.toggle('on', t.active.has(id));
+    el.classList.toggle('touched', !!s && !s.activations);
+    el.classList.toggle('fired', !!s && s.activations > 0);
     el.querySelector('.fill').style.height = Math.min(100, Math.max(live > 0 ? 6 : 0, live / rawMax * 100)) + '%';
     el.querySelector('.cnt').textContent = s ? s.touches : '';
+    const [on, rel] = el.querySelectorAll('.mark');
+    // Only on keys worth looking at; on every tile the lines just add noise.
+    const showMarks = thr && (s || id === state.chartKey);
+    on.style.display = rel.style.display = showMarks ? 'block' : 'none';
+    if (thr) {
+      on.style.bottom = (thr.press / rawMax * 100) + '%';
+      rel.style.bottom = (thr.release / rawMax * 100) + '%';
+    }
   }
   for (const [id, s] of t.stats) if (!keyEls.has(id)) extra.push({ id, s, live: t.live.get(id) || 0 });
   $('extraKeys').classList.toggle('hidden', extra.length === 0);
@@ -260,23 +343,231 @@ function render() {
     `<span class="status">레이아웃 밖 키: ${esc(P.keyName(e.id))} · ${e.s.touches}회 · 현재 ${e.live}</span>`).join('');
 
   const rank = t.ranking();
-  $('ranking').innerHTML = rank.length ? rank.map((r) => `<tr>
-      <td>${esc(P.keyName(r.id))} <span class="muted">#${r.id}</span></td>
-      <td class="num">${r.touches}</td><td class="num">${esc(depthText(r.peak))}</td>
-      <td class="num">${r.live || ''}</td><td class="num">${fmtMs(r.totalMs)}</td></tr>`).join('')
-    : '<tr><td colspan="5" class="muted">아직 감지된 키가 없습니다.</td></tr>';
+  $('ranking').innerHTML = rank.length ? rank.map((r) => {
+    const thr = thrRaw(r.id);
+    const points = thr ? `${mm(thr.press)} / ${mm(thr.release)}` : '—';
+    const margin = !thr ? '—' : r.activations ? '<span class="ok">입력됨</span>' : `${diffMm(thr.press - r.peak)} mm`;
+    return `<tr>
+      <td>${esc(P.keyName(r.id))} <span class="muted">#${r.id}</span>${r.inputOn ? ' <span class="ok">●</span>' : ''}</td>
+      <td class="num">${r.touches}</td><td class="num">${thr ? r.activations : '—'}</td>
+      <td class="num">${esc(depthText(r.peak))}</td><td class="num">${points}</td><td class="num">${margin}</td></tr>`;
+  }).join('') : '<tr><td colspan="6" class="muted">아직 감지된 키가 없습니다.</td></tr>';
 
   const evs = t.events.slice(-200).reverse();
   const open = [...t.open.values()].map((o) => ({ ...o, live: true }));
   const rows = [...open, ...evs].sort((a, b) => b.start - a.start);
   $('events').innerHTML = rows.length ? rows.map((e) => `<tr>
       <td>${fmtClock(e.start)}</td><td>${esc(P.keyName(e.id))}</td>
-      <td class="num">${e.live ? '진행 중' : fmtMs(e.durationMs)}</td><td class="num">${esc(depthText(e.peak))}</td></tr>`).join('')
-    : '<tr><td colspan="4" class="muted">기록 없음</td></tr>';
+      <td class="num">${e.live ? '진행 중' : fmtMs(e.durationMs)}</td><td class="num">${esc(depthText(e.peak))}</td>
+      <td>${e.live ? (t.active.has(e.id) ? '<span class="ok">입력 중</span>' : '<span class="muted">감지 중</span>') : verdict(e)}</td></tr>`).join('')
+    : '<tr><td colspan="5" class="muted">기록 없음</td></tr>';
 
   $('reports').textContent = t.reports;
   if (!$('raw').classList.contains('hidden')) $('raw').textContent = state.rawLog.join('\n');
   requestAnimationFrame(render);
+}
+
+// ---------- depth chart ----------
+const chart = { hoverX: null, readout: '' };
+
+function cssVar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+function valueAt(h, time) {
+  let v = 0;
+  for (const [ts, raw] of h) {
+    if (ts > time) break;
+    v = raw;
+  }
+  return v;
+}
+
+function drawChart() {
+  const t = state.tracker;
+  if ($('follow').checked && t.lastId !== null) state.chartKey = t.lastId;
+  const id = state.chartKey;
+  const wrap = $('chartWrap'), canvas = $('chart');
+  const dpr = window.devicePixelRatio || 1;
+  const W = wrap.clientWidth, H = wrap.clientHeight;
+  if (canvas.width !== Math.round(W * dpr) || canvas.height !== Math.round(H * dpr)) {
+    canvas.width = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+  }
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+
+  const f = fam();
+  const c = { text: cssVar('--text'), muted: cssVar('--muted'), grid: cssVar('--grid'), sense: cssVar('--sense'),
+    on: cssVar('--accent-soft'), accent: cssVar('--accent') };
+  const pad = { l: 48, r: 12, t: 8, b: 22 };
+  const pw = W - pad.l - pad.r, ph = H - pad.t - pad.b;
+  const now = performance.now(), from = now - CHART_MS;
+  const x = (time) => pad.l + ((time - from) / CHART_MS) * pw;
+  const y = (raw) => pad.t + (1 - Math.min(Math.max(raw, 0), f.rawMax) / f.rawMax) * ph;
+
+  // Grid and axes: solid hairlines, labels in muted ink.
+  ctx.font = '11px system-ui, sans-serif';
+  ctx.lineWidth = 1;
+  ctx.fillStyle = c.muted;
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  for (const g of f.gridMm) {
+    const gy = Math.round(y(f.mmToRaw(g))) + 0.5;
+    ctx.strokeStyle = c.grid;
+    ctx.beginPath(); ctx.moveTo(pad.l, gy); ctx.lineTo(pad.l + pw, gy); ctx.stroke();
+    ctx.fillText(`${g} mm`, pad.l - 6, gy);
+  }
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  for (let s = 5; s >= 0; s--) ctx.fillText(s ? `-${s} s` : '지금', x(now - s * 1000), pad.t + ph + 6);
+
+  const h = id === null ? null : t.history.get(id);
+  const thr = id === null ? null : thrRaw(id);
+  const name = id === null ? '' : P.keyName(id);
+  $('chartTitle').textContent = id === null ? '키 깊이 그래프 (최근 5초)' : `키 깊이 그래프 — ${name} (최근 5초)`;
+
+  ctx.save();
+  ctx.beginPath(); ctx.rect(pad.l, pad.t, pw, ph); ctx.clip();
+  // Input-on spans as a soft band behind the trace.
+  for (const [s0, s1] of (id !== null && t.onSpans.get(id)) || []) {
+    const a = x(Math.max(s0, from)), b = x(s1 === null ? now : s1);
+    if (b > pad.l) { ctx.fillStyle = c.on; ctx.fillRect(a, pad.t, b - a, ph); }
+  }
+  // Actuation (solid ink) and release (muted) points.
+  if (thr) {
+    for (const [raw, color, dash] of [[thr.press, c.text, []], [thr.release, c.muted, [4, 3]]]) {
+      const ly = Math.round(y(raw)) + 0.5;
+      ctx.strokeStyle = color; ctx.setLineDash(dash); ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(pad.l, ly); ctx.lineTo(pad.l + pw, ly); ctx.stroke();
+    }
+    ctx.setLineDash([]);
+  }
+  // Depth trace (step line: the stream only reports changes).
+  let peak = 0;
+  if (h && h.length) {
+    ctx.strokeStyle = c.sense; ctx.lineWidth = 2; ctx.lineJoin = 'round';
+    ctx.beginPath();
+    let prev = h[0][1];
+    ctx.moveTo(x(Math.max(h[0][0], from)), y(prev));
+    if (h[0][0] >= from || h.length === 1) peak = prev;
+    for (let i = 1; i < h.length; i++) {
+      const [ts, raw] = h[i];
+      ctx.lineTo(x(ts), y(prev));
+      ctx.lineTo(x(ts), y(raw));
+      if (ts >= from) peak = Math.max(peak, raw, prev);
+      prev = raw;
+    }
+    ctx.lineTo(x(now), y(prev));
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // Direct labels for the two points, at the left edge so they never sit on the live end.
+  if (thr) {
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'bottom';
+    ctx.fillStyle = c.text;
+    ctx.fillText(`입력 ${mm(thr.press)} mm`, pad.l + 6, y(thr.press) - 3);
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = c.muted;
+    ctx.fillText(`해제 ${mm(thr.release)} mm`, pad.l + 6, y(thr.release) + 3);
+  }
+
+  // Hover crosshair + tooltip.
+  const tip = $('tip');
+  if (chart.hoverX !== null && h && chart.hoverX >= pad.l && chart.hoverX <= pad.l + pw) {
+    const time = from + ((chart.hoverX - pad.l) / pw) * CHART_MS;
+    const v = valueAt(h, time);
+    const on = ((t.onSpans.get(id)) || []).some(([a, b]) => time >= a && time <= (b === null ? now : b));
+    ctx.strokeStyle = c.muted; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(Math.round(chart.hoverX) + 0.5, pad.t); ctx.lineTo(Math.round(chart.hoverX) + 0.5, pad.t + ph); ctx.stroke();
+    ctx.fillStyle = c.sense;
+    ctx.beginPath(); ctx.arc(chart.hoverX, y(v), 4, 0, Math.PI * 2); ctx.fill();
+    tip.textContent = `${((now - time) / 1000).toFixed(2)} s 전 · ${mm(v)} mm${thr ? (on ? ' · 입력 중' : ' · 입력 아님') : ''}`;
+    tip.classList.remove('hidden');
+    tip.style.left = Math.min(chart.hoverX + 12, W - tip.offsetWidth - 4) + 'px';
+    tip.style.top = Math.max(0, y(v) - 30) + 'px';
+  } else {
+    tip.classList.add('hidden');
+  }
+
+  let readout = '키를 누르거나 맵에서 키를 클릭하세요.';
+  if (id !== null) {
+    const live = t.live.get(id) || 0;
+    const status = !thr ? '입력/해제 지점 미확인' : t.active.has(id) ? '● 입력 중' : live ? '감지 중 (입력 전)' : '대기';
+    readout = `현재 ${mm(live)} mm · 최근 5초 최대 ${mm(peak)} mm`
+      + (thr ? ` · 입력 ${mm(thr.press)} / 해제 ${mm(thr.release)} mm` : '') + ` · ${status}`;
+  }
+  if (readout !== chart.readout) $('chartReadout').textContent = chart.readout = readout;
+}
+
+// ---------- thresholds (actuation / release points) ----------
+const EXTRA_THRESHOLD_IDS = [152, 153]; // Hanja / Hangeul on KR boards; others answer "fail"
+
+function thrStatus(text) {
+  $('thrStatus').textContent = text;
+}
+
+function applyThresholds(map) {
+  const f = fam();
+  state.thresholds = map;
+  state.tracker.setThresholds([...map].map(([id, v]) =>
+    [id, { press: f.thresholdToRaw(v.thrL), release: f.thresholdToRaw(v.thrH) }]));
+  state.dirty = true;
+}
+
+function thresholdStoreKey() {
+  return `rsf.thresholds.${state.productId}`;
+}
+
+function saveThresholds(profile) {
+  try {
+    const keys = Object.fromEntries([...state.thresholds].map(([id, v]) => [id, [v.thrL, v.thrH]]));
+    localStorage.setItem(thresholdStoreKey(), JSON.stringify({ profile, savedAt: Date.now(), keys }));
+  } catch (err) { /* storage unavailable: thresholds just won't survive a reload */ }
+}
+
+function restoreThresholds() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(thresholdStoreKey()) || 'null');
+    if (!saved) return;
+    applyThresholds(new Map(Object.entries(saved.keys).map(([id, [thrL, thrH]]) => [Number(id), { thrL, thrH }])));
+    state.thrProfile = saved.profile;
+    thrStatus(`저장해 둔 지점 사용 중 (프로필 ${saved.profile}, ${new Date(saved.savedAt).toLocaleString('ko-KR')}) — 설정을 바꿨다면 다시 불러오세요`);
+  } catch (err) { /* ignore unreadable cache */ }
+}
+
+async function loadThresholds() {
+  if (!state.devices.length) return thrStatus('먼저 키보드를 연결하세요');
+  $('thrLoad').disabled = true;
+  try {
+    const profile = $('thrProfile').value === 'active' ? await activeProfile() : 0;
+    const ids = [...keyEls.keys(), ...EXTRA_THRESHOLD_IDS];
+    const map = new Map();
+    let skipped = 0;
+    for (let i = 0; i < ids.length; i++) {
+      thrStatus(`불러오는 중… ${i + 1} / ${ids.length}`);
+      let a = null;
+      for (let attempt = 0; attempt < 2 && !a; attempt++) {
+        try { a = await readKey(profile, ids[i]); } catch (err) { /* retried once, then skipped */ }
+      }
+      // thrL 0 means the host decides (or the key has no analog point): nothing to judge against.
+      if (a && a.thrL > 0) map.set(ids[i], { thrL: a.thrL, thrH: a.thrH });
+      else skipped++;
+    }
+    if (!map.size) throw new Error('읽은 키가 없습니다');
+    applyThresholds(map);
+    state.thrProfile = profile;
+    saveThresholds(profile);
+    thrStatus(`프로필 ${profile === 0 ? '0 (RAM)' : profile}에서 ${map.size}개 키를 불러왔습니다 (${hms(new Date())})`
+      + (skipped ? ` · ${skipped}개는 해당 없음` : ''));
+  } catch (err) {
+    thrStatus(`불러오기 실패: ${err.message || err} — Synapse를 잠시 종료한 뒤 다시 시도해 보세요`);
+  } finally {
+    $('thrLoad').disabled = false;
+  }
 }
 
 function esc(s) {
@@ -331,6 +622,7 @@ async function attach(devices) {
   $('dot').classList.toggle('on', state.devices.length > 0);
   $('connectError').classList.add('hidden');
   fillActuationRange();
+  if (!state.thresholds.size) restoreThresholds();
   setTimeout(() => { if (!state.streamSeen && state.devices.length) $('noStream').classList.remove('hidden'); }, 3000);
 }
 
@@ -348,7 +640,15 @@ async function connect() {
 // ---------- control channel ----------
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function exchange(packet) {
+// One request at a time: the actuation tab and threshold loading share the control channel.
+let exchangeChain = Promise.resolve();
+function exchange(packet) {
+  const run = exchangeChain.then(() => exchangeNow(packet));
+  exchangeChain = run.catch(() => {});
+  return run;
+}
+
+async function exchangeNow(packet) {
   const cls = packet[6], cmd = packet[7];
   const candidates = state.control ? [state.control] : state.devices;
   let lastErr = new Error('제어 인터페이스를 찾지 못했습니다');
@@ -379,7 +679,10 @@ function actLog(line) {
 }
 
 async function resolveProfile() {
-  if ($('actProfile').value !== 'active') return 0;
+  return $('actProfile').value === 'active' ? activeProfile() : 0;
+}
+
+async function activeProfile() {
   const r = await exchange(P.buildPacket(P.ACTIVE_PROFILE.cls, P.ACTIVE_PROFILE.get, 1));
   const slot = r.args[0];
   if (slot < 1 || slot > 6) throw new Error(`활성 프로필 번호가 이상합니다: ${slot}`);
@@ -447,6 +750,11 @@ async function onWrite() {
     currentAssignment = after;
     showAssignment(after);
     const ok = after.thrL === wanted.thrL && after.thrH === wanted.thrH && after.fnId === before.fnId;
+    if (state.thresholds.size && after.thrL > 0) {
+      state.thresholds.set(key, { thrL: after.thrL, thrH: after.thrH });
+      applyThresholds(state.thresholds);
+      saveThresholds(state.thrProfile ?? profile);
+    }
     const mmOf = (t) => f.thresholdToMm(t).toFixed(2);
     actLog(`${ok ? '적용 확인' : '적용했지만 읽어 온 값이 다름'}: ${P.keyName(key)} 프로필 ${profile} `
       + `입력 ${mmOf(before.thrL)} → ${mmOf(after.thrL)} mm, 해제 ${mmOf(before.thrH)} → ${mmOf(after.thrH)} mm`);
@@ -477,17 +785,21 @@ function buildKeySelect() {
 // ---------- CSV ----------
 function exportCsv() {
   const t = state.tracker;
-  const lines = ['type,key,fwID,start_ms,duration_ms,peak_raw,peak_mm'];
-  const f = state.family ? P.FAMILIES[state.family] : null;
+  const f = fam();
+  const mmOr = (raw) => (raw === null || raw === undefined ? '' : f.rawToMm(raw).toFixed(3));
+  const lines = ['type,key,fwID,start_ms,duration_ms,peak_raw,peak_mm,input,activations,first_input_ms,input_held_ms,actuation_mm,release_mm'];
   for (const e of t.events) {
-    lines.push(['touch', csvCell(P.keyName(e.id)), e.id, e.start.toFixed(1), e.durationMs.toFixed(1), e.peak,
-      f ? f.rawToMm(e.peak).toFixed(3) : ''].join(','));
+    const thr = thrRaw(e.id);
+    lines.push(['touch', csvCell(P.keyName(e.id)), e.id, e.start.toFixed(1), e.durationMs.toFixed(1), e.peak, mmOr(e.peak),
+      e.fired === null ? '' : e.fired ? 'yes' : 'no', e.activations, e.firstOnMs === null ? '' : e.firstOnMs.toFixed(1),
+      e.heldMs.toFixed(1), thr ? mmOr(thr.press) : '', thr ? mmOr(thr.release) : ''].join(','));
   }
   for (const r of t.ranking()) {
-    lines.push(['summary', csvCell(P.keyName(r.id)), r.id, '', r.totalMs.toFixed(1), r.peak,
-      f ? f.rawToMm(r.peak).toFixed(3) : ''].join(','));
+    const thr = thrRaw(r.id);
+    lines.push(['summary', csvCell(P.keyName(r.id)), r.id, '', r.totalMs.toFixed(1), r.peak, mmOr(r.peak),
+      thr ? (r.activations ? 'yes' : 'no') : '', r.activations, '', '', thr ? mmOr(thr.press) : '', thr ? mmOr(thr.release) : ''].join(','));
   }
-  const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv' });
+  const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = `razer-sensorfinder-${new Date().toISOString().replace(/[:.]/g, '-')}.csv`;
@@ -512,6 +824,10 @@ function init() {
   $('reset').addEventListener('click', () => { state.tracker.reset(); state.dirty = true; });
   $('noise').addEventListener('change', () => { state.tracker.noiseFloor = Math.max(0, Number($('noise').value) || 0); });
   $('csv').addEventListener('click', exportCsv);
+  $('thrLoad').addEventListener('click', loadThresholds);
+  $('chartWrap').addEventListener('mousemove', (e) => { chart.hoverX = e.offsetX; });
+  $('chartWrap').addEventListener('mouseleave', () => { chart.hoverX = null; });
+  $('follow').addEventListener('change', () => { if ($('follow').checked) state.chartKey = state.tracker.lastId; });
   $('rawToggle').addEventListener('change', () => { $('raw').classList.toggle('hidden', !$('rawToggle').checked); state.dirty = true; });
   $('actRead').addEventListener('click', onRead);
   $('actWrite').addEventListener('click', onWrite);
