@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Razer SensorFinder CLI: watch analog key depth and read/set per-key actuation.
+"""SensorFinder for Razer Huntsman, CLI: watch analog key depth and read/set per-key actuation.
 
 Fallback for the web UI (web/index.html) when WebHID cannot reach the keyboard.
 Requires `pip install hidapi`.
 
-  python razer_sensorfinder.py list
-  python razer_sensorfinder.py monitor [--csv log.csv] [--noise N]
-  python razer_sensorfinder.py get-key [--key Win] [--profile 0|active]
-  python razer_sensorfinder.py set-key --mm 3.0 [--release-mm 2.8] [--key Win] [--profile 0|active]
+  python sensorfinder.py list
+  python sensorfinder.py monitor [--csv log.csv] [--noise N]
+  python sensorfinder.py get-key [--key Win] [--profile 0|active]
+  python sensorfinder.py set-key --mm 3.0 [--release-mm 2.8] [--key Win] [--profile 0|active]
 
 The depth stream only flows in driver mode, i.e. while Razer Synapse is running.
 Actuation set with `set-key` only matters while Synapse is NOT running.

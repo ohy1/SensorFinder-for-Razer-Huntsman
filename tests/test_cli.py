@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "python"))
 
-import razer_sensorfinder as rs  # noqa: E402
+import sensorfinder as rs  # noqa: E402
 
 
 class DepthTests(unittest.TestCase):

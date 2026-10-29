@@ -1,10 +1,15 @@
-# Razer SensorFinder
+# SensorFinder for Razer Huntsman
+
+> **English**: A browser tool for Razer Huntsman analog (optical) keyboards (V2 Analog, Mini Analog, V3 Pro line incl. 8KHz).
+> It shows which keys the sensors register, how deep they go, and whether each press actually crossed the actuation point.
+> It can also set per-key actuation and release points, including keys Synapse hides, such as the Windows key.
+> Open the page in desktop Chrome/Edge: https://ohy1.github.io/SensorFinder-for-Razer-Huntsman/
 
 Razer Huntsman 아날로그(광학) 키보드에서 **어느 키의 센서가 얼마나 눌린 것으로 감지되는지**를 실시간으로 보여 주는 진단 도구입니다.
 호환 키캡을 끼운 뒤 키보드가 미세한 입력을 잡을 때 원인 키를 찾는 용도로 만들었습니다.
 Synapse가 설정 대상에서 빼놓은 키(**윈도우 키** 등)의 입력 지점(액추에이션)을 직접 읽고 바꾸는 기능도 들어 있습니다.
 
-**빠른 실행**: 저장소를 내려받은 뒤 `web/index.html`을 데스크톱 Chrome / Edge로 엽니다. GitHub Pages를 켜면 <https://ohy1.github.io/razer-sensorfinder/>에서도 열 수 있습니다.
+**빠른 실행**: 저장소를 내려받은 뒤 `web/index.html`을 데스크톱 Chrome / Edge로 엽니다. GitHub Pages를 켜면 <https://ohy1.github.io/SensorFinder-for-Razer-Huntsman/>에서도 열 수 있습니다.
 
 > 비공식 도구입니다. Razer와 관계없고, 리버스 엔지니어링으로 공개된 프로토콜을 사용합니다. 사용에 따른 책임은 사용자에게 있습니다.
 
@@ -21,7 +26,7 @@ Synapse가 설정 대상에서 빼놓은 키(**윈도우 키** 등)의 입력 �
 ### 실행
 
 1. **Razer Synapse를 실행해 둡니다** (트레이에 있어도 됩니다). Synapse가 켜져 있으면 키보드가 "드라이버 모드"로 동작하며 키별 깊이 데이터를 PC로 보냅니다. 이 도구는 그 데이터를 함께 읽습니다.
-2. 데스크톱 **Chrome** 또는 **Edge**에서 `web/index.html`을 엽니다. 파일을 더블클릭해도 되고, 기본 브라우저가 다르면 Chrome 창으로 끌어다 놓으면 됩니다. Pages를 켰다면 <https://ohy1.github.io/razer-sensorfinder/>를 열어도 됩니다.
+2. 데스크톱 **Chrome** 또는 **Edge**에서 `web/index.html`을 엽니다. 파일을 더블클릭해도 되고, 기본 브라우저가 다르면 Chrome 창으로 끌어다 놓으면 됩니다. Pages를 켰다면 <https://ohy1.github.io/SensorFinder-for-Razer-Huntsman/>를 열어도 됩니다.
 3. **키보드 연결**을 누르고 목록에서 키보드를 선택합니다.
 4. **입력/해제 지점 → 키보드에서 불러오기**를 한 번 누릅니다. 각 키에 설정된 입력 지점과 해제 지점을 읽어 옵니다(약 3초).
    - 그 뒤로는 눌림마다 실제로 **입력됐는지 / 감지만 됐는지**를 판정해 줍니다.
@@ -82,23 +87,23 @@ pip install hidapi
 ```
 
 ```bash
-python python/razer_sensorfinder.py list
+python python/sensorfinder.py list
 ```
 
 ```bash
-python python/razer_sensorfinder.py monitor --csv touches.csv
+python python/sensorfinder.py monitor --csv touches.csv
 ```
 
 ```bash
-python python/razer_sensorfinder.py get-key --key Win
+python python/sensorfinder.py get-key --key Win
 ```
 
 ```bash
-python python/razer_sensorfinder.py set-key --key Win --mm 3.0
+python python/sensorfinder.py set-key --key Win --mm 3.0
 ```
 
 ```bash
-python python/razer_sensorfinder.py set-key --key Win --mm 2.7 --release-mm 2.5 --profile active
+python python/sensorfinder.py set-key --key Win --mm 2.7 --release-mm 2.5 --profile active
 ```
 
 - `monitor`: 깊이 스트림을 보여 줍니다(Synapse 실행 필요). Ctrl+C로 끝내면 감지 횟수 순으로 요약해 줍니다.
@@ -161,3 +166,7 @@ python -m unittest discover tests
 테스트는 패킷 레이아웃, CRC, 깊이 리포트 파싱, 임계값 변환을 확인합니다.
 웹 UI는 가상 HID 장치로 동작을 확인했습니다. 실제 키보드에서는 아직 시험하지 않았습니다.
 처음 쓸 때 문제가 있으면 *원시 HID 리포트* 내용을 이슈로 남겨 주세요.
+
+## 라이선스
+
+[MIT](LICENSE). Razer, Huntsman, Synapse는 Razer Inc.의 상표입니다. 이 프로젝트는 Razer와 관계없는 비공식 도구입니다.

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Razer SensorFinder</title>
+<title>SensorFinder for Razer Huntsman</title>
 <style>
   :root {
     --bg: #f6f7f9; --panel: #ffffff; --text: #1b1f24; --muted: #5f6b7a; --border: #d8dde3;
@@ -85,7 +85,7 @@
 </head>
 <body>
 <main>
-  <h1>Razer SensorFinder</h1>
+  <h1>SensorFinder <span class="muted" style="font-weight: 500">for Razer Huntsman</span></h1>
   <p class="muted">Razer Huntsman 아날로그(광학) 키보드에서 실제로 눌림이 감지되는 키와 깊이를 실시간으로 보여주고, 키별 입력 지점(윈도우 키 포함)을 직접 설정합니다.</p>
 
   <div id="unsupported" class="note hidden">이 브라우저는 WebHID를 지원하지 않습니다. 데스크톱 <b>Chrome</b> 또는 <b>Edge</b>로 여세요.</div>
@@ -802,7 +802,7 @@ function exportCsv() {
   const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `razer-sensorfinder-${new Date().toISOString().replace(/[:.]/g, '-')}.csv`;
+  a.download = `sensorfinder-${new Date().toISOString().replace(/[:.]/g, '-')}.csv`;
   a.click();
   URL.revokeObjectURL(a.href);
 }
