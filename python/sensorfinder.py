@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import math
 import sys
 import time
 from dataclasses import dataclass, field
@@ -31,8 +32,9 @@ class Family:
     raw_max: int
     zero_mm: float  # threshold 0
     full_mm: float  # threshold 255
-    range_mm: tuple[float, float]
+    thr_range: tuple[int, int]  # writable actuation thresholds
     min_release_gap: int  # release must sit at least this many threshold units below actuation
+    min_release: int  # lowest release threshold the firmware keeps
 
     def raw_to_mm(self, raw: int) -> float:
         if self.entry_size == 2:
@@ -48,23 +50,37 @@ class Family:
         return max(0 if self.entry_size == 2 else 1, min(255, t))
 
 
-# V2: report 07, [fwID, depth:u8], 0..255 = 1.5..3.6 mm.
-# V3: report 0B, [fwID, depth:u16 BE], 1638 = 0.1 mm; key-assignment threshold = high byte.
-V2 = Family(0x07, 2, 0xFF, 1.5, 3.6, (1.5, 3.6), 10)
-V3 = Family(0x0B, 3, 0xFFFF, 0.0, 255 * 256 / 16380, (0.1, 4.0), 6)
+# V2: report 07, [fwID, depth:u8], 0..255 = 1.5..3.6 mm; the firmware clamps actuation to 15..250
+#     (about 1.62-3.56 mm) and release to >= 5 and <= actuation - 10.
+# V3: report 0B, [fwID, depth:u16 BE], 1638 = 0.1 mm; key-assignment threshold = high byte;
+#     0.1-4.0 mm as in Synapse.
+V2 = Family(0x07, 2, 0xFF, 1.5, 3.6, (15, 250), 10, 5)
+V3 = Family(0x0B, 3, 0xFFFF, 0.0, 255 * 256 / 16380, (6, 255), 6, 0)
 
+# pid: (name, family, max actuation in mm if the switch travels less than the family allows)
 MODELS = {
-    0x0266: ("Huntsman V2 Analog", V2),
-    0x0282: ("Huntsman Mini Analog", V2),
-    0x02A6: ("Huntsman V3 Pro", V3),
-    0x02A7: ("Huntsman V3 Pro TKL", V3),
-    0x02B0: ("Huntsman V3 Pro Mini", V3),
-    0x02CF: ("Huntsman V3 Pro 8KHz", V3),
-    0x02D0: ("Huntsman V3 Pro TKL 8KHz", V3),
-    0x02D8: ("Huntsman Signature Edition", V3),
-    0x02E5: ("Huntsman V3 TKL 8KHz", V3),
-    0x02E6: ("Huntsman V3 Pro Low-profile TKL 8KHz", V3),
+    0x0266: ("Huntsman V2 Analog", V2, None),
+    0x0282: ("Huntsman Mini Analog", V2, None),
+    0x02A6: ("Huntsman V3 Pro", V3, None),
+    0x02A7: ("Huntsman V3 Pro TKL", V3, None),
+    0x02B0: ("Huntsman V3 Pro Mini", V3, None),
+    0x02CF: ("Huntsman V3 Pro 8KHz", V3, None),
+    0x02D0: ("Huntsman V3 Pro TKL 8KHz", V3, None),
+    0x02D8: ("Huntsman Signature Edition", V3, None),
+    0x02E5: ("Huntsman V3 TKL 8KHz", V3, None),
+    0x02E6: ("Huntsman V3 Pro Low-profile TKL 8KHz", V3, 2.8),  # low-profile switches, 2.8 mm travel
 }
+
+
+def write_range(pid: int) -> tuple[int, int] | None:
+    """Actuation thresholds set-key may write for a model; None for a model this tool does not know."""
+    if pid not in MODELS:
+        return None
+    _, family, max_mm = MODELS[pid]
+    lo, hi = family.thr_range
+    if max_mm is not None:
+        hi = min(hi, family.mm_to_threshold(max_mm))
+    return lo, hi
 
 KEY_NAMES = {
     1: "`", 2: "1", 3: "2", 4: "3", 5: "4", 6: "5", 7: "6", 8: "7", 9: "8", 10: "9", 11: "0",
@@ -92,7 +108,9 @@ def key_name(fw_id: int) -> str:
 
 
 def key_id(name: str) -> int:
-    if name.isdigit():
+    if name.isascii() and name.isdigit():
+        if not 1 <= int(name) <= 255:
+            raise SystemExit(f"fwID must be 1..255, got {name}")
         return int(name)
     for fw_id, n in KEY_NAMES.items():
         if n.lower() == name.lower():
@@ -193,13 +211,20 @@ class SafetyError(Exception):
     pass
 
 
-def check_packet(packet: bytes, family: "Family") -> None:
-    """Raise SafetyError unless the packet is allowed; writes must look like what set-key produces."""
+def check_packet(packet: bytes, family: "Family | None", rng: "tuple[int, int] | None" = None) -> None:
+    """Raise SafetyError unless the packet is allowed; writes must look like what set-key produces.
+
+    A write needs a known model (`family` and its `rng` from write_range), profile 0-6, the normal
+    layer, a known key, an actuation inside `rng` and a release far enough below it. 0/0 ("host
+    decides", what Synapse stores on V2) is allowed so a previous value can be written back.
+    """
     cls, cmd = packet[6], packet[7]
     if len(packet) != PACKET_LEN or (cls, cmd) not in ALLOWED_COMMANDS:
         raise SafetyError(f"command {cls:02X}:{cmd:02X} is not allowed")
     if (cls, cmd) != (0x02, 0x12):
         return
+    if family is None or rng is None:
+        raise SafetyError("writes need a known keyboard model")
     a = KeyAssignment.parse(packet[8:88])
     if a.profile > 6:
         raise SafetyError("profile out of range")
@@ -207,7 +232,11 @@ def check_packet(packet: bytes, family: "Family") -> None:
         raise SafetyError("only the normal layer may be written")
     if a.key not in KEY_NAMES:
         raise SafetyError(f"unknown key {a.key}")
-    if not (a.thr_l == 0 and a.thr_h == 0) and a.thr_h > a.thr_l - family.min_release_gap:
+    if a.thr_l == 0 and a.thr_h == 0:
+        return
+    if not rng[0] <= a.thr_l <= rng[1]:
+        raise SafetyError(f"actuation {a.thr_l} outside {rng[0]}..{rng[1]} for this model")
+    if not family.min_release <= a.thr_h <= a.thr_l - family.min_release_gap:
         raise SafetyError("release point too close to the actuation point")
 
 
@@ -238,10 +267,14 @@ class KeyAssignment:
     def to_args(self) -> bytes:
         return bytes([self.profile, self.key, self.layer, self.thr_l, self.thr_h, self.fn_id, len(self.fn_data)]) + self.fn_data
 
-    def with_actuation(self, thr_l: int, thr_h: int | None = None, min_gap: int = 10) -> "KeyAssignment":
+    def with_actuation(
+        self, thr_l: int, thr_h: int | None = None, min_gap: int = 10, min_release: int = 0
+    ) -> "KeyAssignment":
         if thr_h is None:
-            thr_h = self.thr_h if self.thr_h <= thr_l - min_gap else max(0, thr_l - min_gap)
-        elif not 0 <= thr_h <= thr_l - min_gap:
+            thr_h = max(self.thr_h, min_release)
+            if thr_h > thr_l - min_gap:
+                thr_h = max(min_release, thr_l - min_gap)
+        elif not min_release <= thr_h <= thr_l - min_gap:
             raise ValueError("release point must sit below the actuation point")
         return KeyAssignment(self.profile, self.key, self.layer, thr_l, thr_h, self.fn_id, self.fn_data)
 
@@ -271,8 +304,9 @@ def open_path(hid, path):
 
 
 class Control:
-    def __init__(self, hid, interfaces, family: "Family" = None):
-        self.family = family or V3
+    def __init__(self, hid, interfaces, family: "Family", rng: "tuple[int, int] | None"):
+        self.family = family
+        self.rng = rng
         self.dev = None
         errors = []
         # Interface 3 is the control channel on every model; try it first.
@@ -289,24 +323,36 @@ class Control:
 
     def exchange(self, packet: bytes) -> bytes:
         try:
-            check_packet(packet, self.family)
+            check_packet(packet, self.family, self.rng)
         except SafetyError as e:
             raise SystemExit(f"blocked by the safety policy: {e}")
         cls, cmd = packet[6], packet[7]
+        io_errors = 0
         # Synapse shares the channel while it runs: a reply to its request means send ours again.
         for attempt in range(5):
-            self.dev.send_feature_report(b"\x00" + packet)
-            for i in range(20):
-                time.sleep(0.005 if i == 0 else 0.02)
-                reply = parse_reply(bytes(self.dev.get_feature_report(0, PACKET_LEN + 1)), cls, cmd)
-                if reply is None:
-                    break
+            try:
+                if self.dev.send_feature_report(b"\x00" + packet) < 0:
+                    raise OSError("send_feature_report failed")
+                replies = []
+                for i in range(20):
+                    time.sleep(0.005 if i == 0 else 0.02)
+                    reply = parse_reply(bytes(self.dev.get_feature_report(0, PACKET_LEN + 1)), cls, cmd)
+                    if reply is None or reply[0] != 1:
+                        replies.append(reply)
+                        break
+                reply = replies[0] if replies else (1, b"")
+            except OSError as e:
+                io_errors += 1
+                if io_errors >= 3:
+                    raise SystemExit(f"lost contact with the keyboard (unplugged?): {e}")
+                time.sleep(0.05)
+                continue
+            if reply is not None:
                 status, args = reply
-                if status == 1:
-                    continue
-                if status != 2:
+                if status == 2:
+                    return args
+                if status != 1:
                     raise SystemExit(f"keyboard answered: {STATUS.get(status, hex(status))}")
-                return args
             time.sleep(0.02 + attempt * 0.03)
         raise SystemExit("no matching reply (another program may be using the keyboard, e.g. Synapse)")
 
@@ -317,7 +363,7 @@ class Control:
         return slot
 
     def driver_mode(self) -> bool | None:
-        """True while Synapse runs (driver mode); None if the keyboard does not say."""
+        """True while Synapse runs (driver mode), False in hardware mode, None if the keyboard does not say."""
         try:
             return self.exchange(build_packet(0x00, 0x84, 2))[0] == MODE_DRIVER
         except SystemExit:
@@ -325,7 +371,7 @@ class Control:
 
     def read_key(self, profile: int, key: int) -> KeyAssignment:
         # Another program (Synapse) may be using the channel: only accept the reply we asked for.
-        for _ in range(3):
+        for _ in range(5):
             a = KeyAssignment.parse(self.exchange(build_packet(0x02, 0x92, 80, [profile, key, 0])))
             if (a.profile, a.key, a.layer) == (profile, key, 0):
                 return a
@@ -349,35 +395,53 @@ def cmd_list(_args):
         )
 
 
+# Top-level collections the OS owns (keyboard, mouse, consumer/system control, gamepad): on Windows
+# hidapi may still open them with no access, and the first read then fails.
+OS_OWNED_USAGES = {(0x01, 0x02), (0x01, 0x04), (0x01, 0x05), (0x01, 0x06), (0x01, 0x80), (0x0C, 0x01)}
+
+
 def cmd_monitor(args):
     hid = _hid()
     pid, interfaces = find_keyboard(hid)
-    name, family = MODELS[pid]
+    name, family, _ = MODELS[pid]
     readers = []
+    seen_paths = set()
     for info in interfaces:
-        if info["interface_number"] != 1:
+        # On Linux/macOS every collection of an interface shares one path: open it once.
+        if info["interface_number"] != 1 or info["path"] in seen_paths:
             continue
+        if (info.get("usage_page"), info.get("usage")) in OS_OWNED_USAGES:
+            continue
+        seen_paths.add(info["path"])
         try:
             dev = open_path(hid, info["path"])
             dev.set_nonblocking(True)
             readers.append(dev)
         except OSError:
-            pass  # keyboard/mouse collections are owned by the OS
+            pass
     if not readers:
         raise SystemExit("could not open the depth-stream interface (1)")
     print(f"Razer {name}: watching depth stream. Start Razer Synapse if nothing shows up. Ctrl+C to stop.")
 
     tracker = Tracker(noise_floor=args.noise)
-    out = None
+    out = csv_file = None
     if args.csv:
-        out = csv.writer(open(args.csv, "w", newline="", encoding="utf-8-sig"))
+        csv_file = open(args.csv, "w", newline="", encoding="utf-8-sig")
+        out = csv.writer(csv_file)
         out.writerow(["start_s", "key", "fwID", "duration_ms", "peak_raw", "peak_mm"])
+        csv_file.flush()
     t0 = time.perf_counter()
     try:
         while True:
             got = False
-            for dev in readers:
-                data = dev.read(64)
+            for dev in list(readers):
+                try:
+                    data = dev.read(64)
+                except OSError:
+                    readers.remove(dev)  # a collection we cannot read after all
+                    if not readers:
+                        raise SystemExit("lost the depth-stream interface; is the keyboard still connected?")
+                    continue
                 if not data or data[0] != family.depth_report_id:
                     continue
                 got = True
@@ -388,10 +452,14 @@ def cmd_monitor(args):
                     print(f"{touch.start:9.3f}s  {key_name(touch.key):<10} {dur:8.1f} ms  peak {touch.peak} (~{mm:.2f} mm)")
                     if out:
                         out.writerow([f"{touch.start:.3f}", key_name(touch.key), touch.key, f"{dur:.1f}", touch.peak, f"{mm:.3f}"])
+                        csv_file.flush()  # closing the console window on Windows skips any cleanup
             if not got:
                 time.sleep(0.001)
     except KeyboardInterrupt:
         pass
+    finally:
+        if csv_file:
+            csv_file.close()
     print("\nsummary (most touched first):")
     for fw_id in sorted(tracker.touches, key=lambda k: (-tracker.touches[k], -tracker.peaks[k])):
         peak = tracker.peaks[fw_id]
@@ -401,10 +469,11 @@ def cmd_monitor(args):
 def _control(args):
     hid = _hid()
     pid, interfaces = find_keyboard(hid)
-    name, family = MODELS[pid]
-    ctl = Control(hid, interfaces, family)
+    name, family, _ = MODELS[pid]
+    rng = write_range(pid)
+    ctl = Control(hid, interfaces, family, rng)
     profile = ctl.active_profile() if args.profile == "active" else 0
-    return name, family, ctl, profile
+    return name, family, rng, ctl, profile
 
 
 def _describe(family: Family, a: KeyAssignment) -> str:
@@ -417,37 +486,80 @@ def _describe(family: Family, a: KeyAssignment) -> str:
 
 
 def cmd_get_key(args):
-    _, family, ctl, profile = _control(args)
+    _, family, _, ctl, profile = _control(args)
     print(_describe(family, ctl.read_key(profile, key_id(args.key))))
 
 
+def mm_bound(family: Family, rng: tuple[int, int], thr: int) -> str:
+    """The shortest mm value one can type that still converts to a threshold inside `rng`."""
+    mm = family.threshold_to_mm(thr)
+    for digits in (1, 2, 3):
+        if rng[0] <= family.mm_to_threshold(round(mm, digits)) <= rng[1]:
+            return f"{mm:.{digits}f}"
+    return f"{mm:.3f}"
+
+
+def confirm(question: str) -> bool:
+    try:
+        return input(question).strip().lower() == "y"
+    except EOFError:  # no console to answer from
+        print()
+        return False
+
+
+def _restore_command(family: Family, a: KeyAssignment, profile_arg: str) -> str:
+    if a.thr_l == 0 and a.thr_h == 0:
+        return "(0/0 = decided by Synapse/host: re-apply the profile in Razer Synapse)"
+    return (
+        f"python sensorfinder.py set-key --key {a.key} --profile {profile_arg} "
+        f"--mm {family.threshold_to_mm(a.thr_l):.2f} --release-mm {family.threshold_to_mm(a.thr_h):.2f}"
+    )
+
+
 def cmd_set_key(args):
-    name, family, ctl, profile = _control(args)
-    lo, hi = family.range_mm
-    if not lo <= args.mm <= hi:
-        raise SystemExit(f"--mm must be within {lo}..{hi} for the {name}")
-    key = key_id(args.key)
+    name, family, rng, ctl, profile = _control(args)
+    if not math.isfinite(args.mm) or (args.release_mm is not None and not math.isfinite(args.release_mm)):
+        raise SystemExit("--mm and --release-mm must be numbers")
     thr_l = family.mm_to_threshold(args.mm)
+    if not rng[0] <= thr_l <= rng[1]:
+        lo_mm, hi_mm = mm_bound(family, rng, rng[0]), mm_bound(family, rng, rng[1])
+        raise SystemExit(f"--mm must be within {lo_mm}..{hi_mm} for the {name}")
+    key = key_id(args.key)
     thr_h = None
     if args.release_mm is not None:
         thr_h = 0 if args.release_mm <= 0 else family.mm_to_threshold(args.release_mm)
-        if thr_h > thr_l - family.min_release_gap:
+        if not family.min_release <= thr_h <= thr_l - family.min_release_gap:
             raise SystemExit("--release-mm must be at least 0.1 mm shallower than --mm")
-    if ctl.driver_mode() and not args.yes:
-        print("Razer Synapse appears to be running (driver mode): the value may be reverted or not take effect.")
-        if input("continue anyway? [y/N] ").strip().lower() != "y":
-            return
-    if profile != 0 and not args.yes:
-        if input(f"write to flash slot {profile}? [y/N] ").strip().lower() != "y":
-            return
+
+    mode = ctl.driver_mode()
+    if mode is not False:
+        if mode:
+            print("Razer Synapse appears to be running (driver mode): the value may be reverted or not take effect.")
+        else:
+            print("Could not read the device mode: Razer Synapse may be running, and the value may not take effect.")
+        if not args.yes and not confirm("continue anyway? [y/N] "):
+            raise SystemExit("aborted, nothing written")
+    if profile != 0 and not args.yes and not confirm(f"write to flash slot {profile}? [y/N] "):
+        raise SystemExit("aborted, nothing written")
+
     before = ctl.read_key(profile, key)
-    wanted = before.with_actuation(thr_l, thr_h, family.min_release_gap)
-    ctl.write_key(wanted)
-    after = ctl.read_key(profile, key)
+    # Shown before writing, so the original values are known even if something fails later.
     print("before:", _describe(family, before))
+    print("  to restore it:", _restore_command(family, before, args.profile))
+    wanted = before.with_actuation(thr_l, thr_h, family.min_release_gap, family.min_release)
+    if (wanted.thr_l, wanted.thr_h) == (before.thr_l, before.thr_h):
+        print("already set, nothing written")
+        return
+    try:
+        ctl.write_key(wanted)
+        after = ctl.read_key(profile, key)
+    except (SystemExit, OSError, KeyboardInterrupt):
+        print("the write may already have been applied; check with get-key, restore with the command above")
+        raise
     print("after: ", _describe(family, after))
     if (after.thr_l, after.thr_h) != (wanted.thr_l, wanted.thr_h):
         print("warning: the keyboard did not keep the new value")
+        raise SystemExit(2)  # scripts can tell "not kept" from success
 
 
 def main(argv=None):
@@ -465,7 +577,7 @@ def main(argv=None):
         if name == "set-key":
             p.add_argument("--mm", type=float, required=True, help="new actuation point in mm")
             p.add_argument("--release-mm", type=float, help="new release point in mm (default: keep, or pull below --mm)")
-            p.add_argument("--yes", action="store_true", help="do not ask before writing flash")
+            p.add_argument("--yes", action="store_true", help="do not ask for confirmation (Synapse running, flash write)")
         p.set_defaults(func=func)
     args = ap.parse_args(argv)
     args.func(args)

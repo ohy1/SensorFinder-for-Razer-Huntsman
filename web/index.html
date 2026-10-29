@@ -10,18 +10,19 @@
     --key: #eef1f4; --key-text: #2a3038; --accent: #13a10e; --accent-soft: rgba(19, 161, 14, 0.18);
     --warn: #c26a00; --warn-soft: rgba(194, 106, 0, 0.14); --danger: #c62828; --mono: ui-monospace, SFMono-Regular, Consolas, monospace;
     --sense: #2f6fdf; --grid: #e6e9ed;
+    --accent-btn: #0b6b08; --on-accent: #ffffff;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       --bg: #111418; --panel: #1a1e24; --text: #e6e9ed; --muted: #97a3b2; --border: #2c333c;
       --key: #242a32; --key-text: #d5dbe2; --accent: #44d62c; --accent-soft: rgba(68, 214, 44, 0.2);
-      --warn: #ffa733; --warn-soft: rgba(255, 167, 51, 0.16); --danger: #ff6b6b; --sense: #6ea8ff; --grid: #262c34;
+      --warn: #ffa733; --warn-soft: rgba(255, 167, 51, 0.16); --danger: #ff6b6b; --sense: #6ea8ff; --grid: #262c34; --accent-btn: #44d62c; --on-accent: #0b1a07;
     }
   }
   :root[data-theme="dark"] {
     --bg: #111418; --panel: #1a1e24; --text: #e6e9ed; --muted: #97a3b2; --border: #2c333c;
     --key: #242a32; --key-text: #d5dbe2; --accent: #44d62c; --accent-soft: rgba(68, 214, 44, 0.2);
-    --warn: #ffa733; --warn-soft: rgba(255, 167, 51, 0.16); --danger: #ff6b6b; --sense: #6ea8ff; --grid: #262c34;
+    --warn: #ffa733; --warn-soft: rgba(255, 167, 51, 0.16); --danger: #ff6b6b; --sense: #6ea8ff; --grid: #262c34; --accent-btn: #44d62c; --on-accent: #0b1a07;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif; }
@@ -34,7 +35,7 @@
   .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
   button, select, input { font: inherit; color: inherit; }
   button { background: var(--panel); border: 1px solid var(--border); border-radius: 7px; padding: 6px 12px; cursor: pointer; }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button.primary { background: var(--accent-btn); border-color: var(--accent-btn); color: var(--on-accent); font-weight: 600; }
   button:disabled { opacity: 0.5; cursor: default; }
   select, input[type="number"] { background: var(--panel); border: 1px solid var(--border); border-radius: 7px; padding: 5px 8px; }
   input[type="number"] { width: 90px; }
@@ -67,6 +68,7 @@
   .chart-wrap canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
   .tip { position: absolute; pointer-events: none; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font-size: 12px; font-family: var(--mono); white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
   .ok { color: var(--accent); font-weight: 600; }
+  a { color: var(--sense); }
   .key.selected > div { outline: 2px dashed var(--text); outline-offset: -3px; }
 
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
@@ -209,7 +211,8 @@
         <button id="actWrite" class="primary" disabled data-i18n="actApply"></button>
         <button id="actUndo" class="hidden"></button>
       </div>
-      <p class="muted" style="margin-top: 6px" data-i18n-html="actHelpHtml"></p>
+      <p id="actRange" class="muted" style="margin-top: 6px"></p>
+      <p class="muted" style="margin-top: 2px" data-i18n-html="actHelpHtml"></p>
       <pre id="actLog" style="margin-top: 10px"></pre>
     </div>
   </section>
@@ -226,8 +229,12 @@ const P = RazerProtocol;
 const $ = (id) => document.getElementById(id);
 const tr = (key, vars) => I18N.t(key, vars);
 
+function langStrings() {
+  return Object.prototype.hasOwnProperty.call(I18N.strings, I18N.lang) ? I18N.strings[I18N.lang] : I18N.strings.en;
+}
+
 function keyName(id) {
-  return I18N.strings[I18N.lang].keyNames[id] || P.keyName(id);
+  return langStrings().keyNames[id] || P.keyName(id);
 }
 
 const state = {
@@ -242,9 +249,13 @@ const state = {
   streamSeen: false,
   thresholds: new Map(),  // fwID -> {thrL, thrH} in threshold units
   chartKey: null,
-  undo: null,          // {profile, key, thrL, thrH} replaced by the last write
-  thrMsg: ['thrNotLoaded', null], // [string key, () => vars], re-rendered on language change
+  undo: null,          // {productId, profile, key, thrL, thrH, pending} replaced by the last write
+  thrMsg: ['thrNotLoaded', null, []], // [string key, () => vars, extras], re-rendered on language change
+  thrProfile: undefined, // profile the monitor's points were loaded from
   lostDevice: false,
+  busy: false,         // a read/write/undo/load is talking to the keyboard
+  lastRead: null,      // exact values behind the pre-filled mm fields
+  mode: null,          // last device mode read with 00:84 (0 hardware, 3 driver)
 };
 
 const CHART_MS = 5000;
@@ -263,7 +274,7 @@ function buildKeyboard() {
     el.style.height = (k.h / TOTAL_H * 100) + '%';
     el.title = `${keyName(k.id)} (fwID ${k.id})`;
     el.innerHTML = `<div><span class="fill"></span><span class="mark"></span><span class="mark rel"></span><span class="lbl"></span><span class="cnt"></span></div>`;
-    el.querySelector('.lbl').textContent = I18N.strings[I18N.lang].keyNames[k.id] || P.shortKeyName(k.id);
+    el.querySelector('.lbl').textContent = langStrings().keyNames[k.id] || P.shortKeyName(k.id);
     el.addEventListener('click', () => {
       selectActuationKey(k.id);
       state.chartKey = k.id;
@@ -287,10 +298,15 @@ function depthText(raw) {
   return `≈${mm(raw)} mm`;
 }
 
-/** A difference in raw depth units, in mm. */
+/** A positive difference in raw depth units, in mm. */
 function diffMm(d) {
   const f = fam();
-  return (f.rawToMm(Math.abs(d)) - f.rawToMm(0)).toFixed(2);
+  return (f.rawToMm(d) - f.rawToMm(0)).toFixed(2);
+}
+
+/** Live depth for display: raw 0 means the key is not in the stream (at rest). */
+function liveDepth(raw) {
+  return raw > 0 ? `${mm(raw)} mm` : tr('atRest');
 }
 
 function thrRaw(id) {
@@ -298,11 +314,15 @@ function thrRaw(id) {
 }
 
 function verdict(e) {
-  if (e.fired === null || e.fired === undefined) return `<span class="muted">${tr('verdictUnknown')}</span>`;
+  if (e.fired === null || e.fired === undefined) {
+    return `<span class="muted">${tr(e.interrupted ? 'verdictInterrupted' : 'verdictUnknown')}</span>`;
+  }
   if (e.fired) {
     const n = e.activations > 1 ? ` ×${e.activations}` : '';
     return `<span class="ok">${tr('verdictFired')}${n}</span> <span class="muted">${tr('verdictFiredDetail', { ms: Math.round(e.firstOnMs), held: fmtMs(e.heldMs) })}</span>`;
   }
+  // A non-positive margin means the points changed after this touch was recorded.
+  if (!(e.marginRaw > 0)) return `<span class="muted">${tr('verdictUnknown')}</span>`;
   return `<span style="color: var(--warn)">${tr('verdictMissed')}</span> <span class="muted">${tr('verdictShort', { mm: diffMm(e.marginRaw) })}</span>`;
 }
 
@@ -324,7 +344,7 @@ function render() {
   if (!state.dirty) return requestAnimationFrame(render);
   state.dirty = false;
   const t = state.tracker;
-  const rawMax = state.family ? P.FAMILIES[state.family].rawMax : 255;
+  const rawMax = fam().rawMax;
   const extra = [];
 
   for (const [id, el] of keyEls) {
@@ -333,7 +353,8 @@ function render() {
     const thr = thrRaw(id);
     el.classList.toggle('live', live > 0);
     el.classList.toggle('on', t.active.has(id));
-    el.classList.toggle('touched', !!s && !s.activations);
+    // Orange only means something when the key's points were known while it was touched.
+    el.classList.toggle('touched', !!s && !!thr && s.judgedTouches > 0 && !s.activations);
     el.classList.toggle('fired', !!s && s.activations > 0);
     el.querySelector('.fill').style.height = Math.min(100, Math.max(live > 0 ? 6 : 0, live / rawMax * 100)) + '%';
     el.querySelector('.cnt').textContent = s ? s.touches : '';
@@ -355,7 +376,9 @@ function render() {
   $('ranking').innerHTML = rank.length ? rank.map((r) => {
     const thr = thrRaw(r.id);
     const points = thr ? `${mm(thr.press)} / ${mm(thr.release)}` : '—';
-    const margin = !thr ? '—' : r.activations ? `<span class="ok">${tr('verdictFired')}</span>` : `${diffMm(thr.press - r.peak)} mm`;
+    const left = thr ? thr.press - r.judgedPeak : 0;
+    const margin = !thr ? '—' : r.activations ? `<span class="ok">${tr('verdictFired')}</span>`
+      : r.judgedTouches && left > 0 ? `${diffMm(left)} mm` : '—';
     return `<tr>
       <td>${esc(keyName(r.id))} <span class="muted">#${r.id}</span>${r.inputOn ? ' <span class="ok">●</span>' : ''}</td>
       <td class="num">${r.touches}</td><td class="num">${thr ? r.activations : '—'}</td>
@@ -468,6 +491,7 @@ function drawChart() {
       if (ts >= from) peak = Math.max(peak, raw, prev);
       prev = raw;
     }
+    peak = Math.max(peak, prev); // the last level lasts until now
     ctx.lineTo(x(now), y(prev));
     ctx.stroke();
   }
@@ -494,7 +518,7 @@ function drawChart() {
     ctx.beginPath(); ctx.moveTo(Math.round(chart.hoverX) + 0.5, pad.t); ctx.lineTo(Math.round(chart.hoverX) + 0.5, pad.t + ph); ctx.stroke();
     ctx.fillStyle = c.sense;
     ctx.beginPath(); ctx.arc(chart.hoverX, y(v), 4, 0, Math.PI * 2); ctx.fill();
-    tip.textContent = tr('tipAgo', { s: ((now - time) / 1000).toFixed(2), mm: mm(v) }) + (thr ? tr(on ? 'tipOn' : 'tipOff') : '');
+    tip.textContent = tr('tipAgo', { s: ((now - time) / 1000).toFixed(2), depth: liveDepth(v) }) + (thr ? tr(on ? 'tipOn' : 'tipOff') : '');
     tip.classList.remove('hidden');
     tip.style.left = Math.min(chart.hoverX + 12, W - tip.offsetWidth - 4) + 'px';
     tip.style.top = Math.max(0, y(v) - 30) + 'px';
@@ -506,7 +530,7 @@ function drawChart() {
   if (id !== null) {
     const live = t.live.get(id) || 0;
     const status = tr(!thr ? 'stUnknown' : t.active.has(id) ? 'stOn' : live ? 'stSensing' : 'stIdle');
-    readout = tr('readout', { cur: mm(live), peak: mm(peak) })
+    readout = tr('readout', { cur: liveDepth(live), peak: liveDepth(peak) })
       + (thr ? tr('readoutPoints', { on: mm(thr.press), off: mm(thr.release) }) : '') + ` · ${status}`;
   }
   if (readout !== chart.readout) $('chartReadout').textContent = chart.readout = readout;
@@ -515,15 +539,18 @@ function drawChart() {
 // ---------- thresholds (actuation / release points) ----------
 const EXTRA_THRESHOLD_IDS = [152, 153]; // Hanja / Hangeul on KR boards; others answer "fail"
 
-/** Shows a status message; `vars` is a function so the text can be rebuilt in another language. */
-function thrStatus(key, vars = null) {
-  state.thrMsg = [key, vars];
+/**
+ * Shows a status message; `vars` is a function so the text can be rebuilt in another language,
+ * `extras` are [key, vars] pairs appended to it.
+ */
+function thrStatus(key, vars = null, extras = []) {
+  state.thrMsg = [key, vars, extras];
   renderThrStatus();
 }
 
 function renderThrStatus() {
-  const [key, vars] = state.thrMsg;
-  $('thrStatus').textContent = tr(key, vars ? vars() : null);
+  const [key, vars, extras] = state.thrMsg;
+  $('thrStatus').textContent = tr(key, vars ? vars() : null) + (extras || []).map(([k, v]) => tr(k, v)).join('');
 }
 
 function applyThresholds(map) {
@@ -546,61 +573,79 @@ function saveThresholds(profile) {
   } catch (err) { /* storage unavailable: thresholds just won't survive a reload */ }
 }
 
+function hasSavedThresholds() {
+  try { return !!localStorage.getItem(thresholdStoreKey()); } catch (err) { return false; }
+}
+
 function restoreThresholds() {
   try {
     const saved = JSON.parse(localStorage.getItem(thresholdStoreKey()) || 'null');
-    if (!saved) return;
-    applyThresholds(new Map(Object.entries(saved.keys).map(([id, [thrL, thrH]]) => [Number(id), { thrL, thrH }])));
-    state.thrProfile = saved.profile;
-    thrStatus('thrCached', () => ({ p: saved.profile, date: new Date(saved.savedAt).toLocaleString(I18N.locale()) }));
+    if (!saved || typeof saved.keys !== 'object' || !saved.keys) return;
+    const ok = (t) => Number.isInteger(t) && t >= 0 && t <= 255;
+    // The storage is shared with other pages on this origin: take only well-formed entries.
+    const map = new Map(Object.entries(saved.keys)
+      .filter(([id, v]) => P.KEY_NAMES[Number(id)] && Array.isArray(v) && ok(v[0]) && ok(v[1]) && v[0] > 0)
+      .map(([id, [thrL, thrH]]) => [Number(id), { thrL, thrH }]));
+    if (!map.size) return;
+    applyThresholds(map);
+    state.thrProfile = Number.isInteger(saved.profile) ? saved.profile : 0;
+    const when = Number(saved.savedAt) || 0;
+    thrStatus('thrCached', () => ({ p: state.thrProfile, date: new Date(when).toLocaleString(I18N.locale()) }));
   } catch (err) { /* ignore unreadable cache */ }
 }
 
 async function loadThresholds() {
+  if (state.busy) return;
   if (!state.devices.length) return thrStatus('errConnectFirst');
-  $('thrLoad').disabled = true;
-  try {
-    let profile = 0, fellBack = false;
-    if ($('thrProfile').value === 'active') {
-      // In driver mode profile 0 holds a copy of the active profile, so it is a sound fallback.
-      try { profile = await activeProfile(); } catch (err) { fellBack = true; }
-    }
-    const ids = [...keyEls.keys(), ...EXTRA_THRESHOLD_IDS];
-    const map = new Map();
-    let zero = 0, lastErr = null;
-    let pending = ids;
-    // Second pass for keys whose reads kept colliding with another program's requests.
-    for (let pass = 0; pass < 2 && pending.length; pass++) {
-      const retry = [];
-      for (let i = 0; i < pending.length; i++) {
-        thrStatus('thrLoading', () => ({ i: i + 1, n: pending.length }));
-        let a = null;
-        try { a = await readKey(profile, pending[i]); } catch (err) { lastErr = err; }
-        // thrL 0 means the host decides (or the key has no analog point): nothing to judge against.
-        if (a && a.thrL > 0) map.set(pending[i], { thrL: a.thrL, thrH: a.thrH });
-        else if (a) zero++;
-        else retry.push(pending[i]);
+  await withBusy(async () => {
+    const pid = state.productId;
+    const gone = () => !state.devices.length || state.productId !== pid;
+    try {
+      let profile = 0, fellBack = false;
+      if ($('thrProfile').value === 'active') {
+        // In driver mode profile 0 holds a copy of the active profile, so it is a sound fallback.
+        try { profile = await activeProfile(); } catch (err) { fellBack = true; }
       }
-      pending = retry;
+      const ids = [...keyEls.keys(), ...EXTRA_THRESHOLD_IDS];
+      const map = new Map();
+      let zero = 0, lastErr = null;
+      let pending = ids;
+      // Second pass for keys whose reads kept colliding with another program's requests.
+      for (let pass = 0; pass < 2 && pending.length; pass++) {
+        const retry = [];
+        for (let i = 0; i < pending.length; i++) {
+          if (gone()) throw new Error(tr('thrInterrupted'));
+          thrStatus('thrLoading', () => ({ i: i + 1, n: pending.length }));
+          let a = null, refused = false;
+          try { a = await readKey(profile, pending[i]); } catch (err) { lastErr = err; refused = err.status !== undefined; }
+          // thrL 0 means the host decides (or the key has no analog point), and a refused read
+          // means the board has no such key (e.g. 한자/한영 on ANSI): nothing to judge against.
+          if (a && a.thrL > 0) map.set(pending[i], { thrL: a.thrL, thrH: a.thrH });
+          else if (a || refused) zero++;
+          else retry.push(pending[i]);
+        }
+        pending = retry;
+      }
+      if (gone()) throw new Error(tr('thrInterrupted'));
+      const failed = pending.length;
+      if (!map.size) {
+        if (zero && !failed) throw new Error(tr('errAllZero'));
+        throw new Error(tr('errNoneRead', { n: failed, err: lastErr ? lastErr.message || lastErr : '-' }));
+      }
+      applyThresholds(map);
+      state.thrProfile = profile;
+      // A load with read failures is used for now but does not replace an earlier saved set.
+      if (!failed || !hasSavedThresholds()) saveThresholds(profile);
+      const time = hms(new Date());
+      const extras = [];
+      if (zero) extras.push(['thrSkipped', { n: zero }]);
+      if (failed) extras.push(['thrFailedKeys', { n: failed }]);
+      if (fellBack) extras.push(['thrFellBack', null]);
+      thrStatus('thrLoaded', () => ({ p: profile === 0 ? '0 (RAM)' : profile, n: map.size, time }), extras);
+    } catch (err) {
+      thrStatus('thrFailed', () => ({ err: err.message || err }));
     }
-    const failed = pending.length;
-    const skipped = zero + failed;
-    if (!map.size) {
-      if (zero && !failed) throw new Error(tr('errAllZero'));
-      throw new Error(tr('errNoneRead', { n: failed, err: lastErr ? lastErr.message || lastErr : '-' }));
-    }
-    applyThresholds(map);
-    state.thrProfile = profile;
-    saveThresholds(profile);
-    const time = hms(new Date());
-    thrStatus('thrLoaded', () => ({ p: profile === 0 ? '0 (RAM)' : profile, n: map.size, time }));
-    if (skipped) $('thrStatus').textContent += tr('thrSkipped', { n: skipped });
-    if (fellBack) $('thrStatus').textContent += tr('thrFellBack');
-  } catch (err) {
-    thrStatus('thrFailed', () => ({ err: err.message || err }));
-  } finally {
-    $('thrLoad').disabled = false;
-  }
+  });
 }
 
 function esc(s) {
@@ -609,12 +654,20 @@ function esc(s) {
 
 // ---------- HID ----------
 function onInputReport(e) {
+  if (!state.devices.includes(e.device || e.target)) return; // a device this page has let go of
   const bytes = new Uint8Array(e.data.buffer, e.data.byteOffset, e.data.byteLength);
   const family = state.family || P.familyOf(state.productId, e.reportId);
   state.rawLog.push(`#${e.reportId.toString(16).padStart(2, '0')}  ${P.hex(bytes)}`);
   if (state.rawLog.length > 20) state.rawLog.shift();
   if (!family || e.reportId !== P.FAMILIES[family].depthReportId) { state.dirty = true; return; }
-  state.family = family;
+  if (state.family !== family) {
+    // Unknown model: the family was just learned from its depth report; points in device units
+    // must be converted again. (Writes never use a guessed family.)
+    state.family = family;
+    if (state.thresholds.size) applyThresholds(state.thresholds);
+    fillActuationRange();
+  }
+  state.mode = P.DEVICE_MODE.driver; // the depth stream only flows in driver mode
   if (!state.streamSeen) {
     state.streamSeen = true;
     $('noStream').classList.add('hidden');
@@ -626,7 +679,7 @@ function onInputReport(e) {
 
 function renderModeHint() {
   $('modehint').textContent = tr('driverMode');
-  $('modehint').classList.toggle('hidden', !state.streamSeen);
+  $('modehint').classList.toggle('hidden', !state.devices.length || state.mode !== P.DEVICE_MODE.driver);
 }
 
 function renderDevName() {
@@ -642,41 +695,123 @@ function hasControlCollection(dev) {
   return (dev.collections || []).some((c) => (c.featureReports || []).some((r) => r.reportId === 0));
 }
 
-async function attach(devices) {
-  const kb = devices.filter((d) => d.vendorId === P.VENDOR_RAZER);
-  if (!kb.length) return;
-  state.productId = kb[0].productId;
-  const model = P.MODELS[state.productId];
-  state.family = model ? model.family : null;
-  for (const d of kb) {
-    if (state.devices.includes(d)) continue;
+/** Groups Razer HIDDevices by product and picks one keyboard: the current one, else a known model. */
+function pickKeyboard(devices) {
+  const byPid = new Map();
+  for (const d of devices) {
+    if (d.vendorId !== P.VENDOR_RAZER) continue;
+    if (!byPid.has(d.productId)) byPid.set(d.productId, []);
+    byPid.get(d.productId).push(d);
+  }
+  if (!byPid.size) return [];
+  if (state.productId !== null && byPid.has(state.productId)) return byPid.get(state.productId);
+  const known = [...byPid.keys()].find((pid) => P.MODELS[pid]);
+  return byPid.get(known !== undefined ? known : [...byPid.keys()][0]);
+}
+
+async function releaseDevices() {
+  for (const d of state.devices) {
+    d.removeEventListener('inputreport', onInputReport);
+    try { await d.close(); } catch (err) { /* already gone */ }
+  }
+  state.devices = [];
+  state.control = null;
+}
+
+/** Forgets everything that belonged to the previous keyboard. */
+function resetBoardState() {
+  state.tracker.reset();
+  state.tracker.setThresholds([]);
+  state.thresholds = new Map();
+  state.thrProfile = undefined;
+  state.thrMsg = ['thrNotLoaded', null, []];
+  state.undo = null;
+  state.lastRead = null;
+  state.mode = null;
+  state.streamSeen = false;
+  state.chartKey = null;
+  currentAssignment = null;
+  $('actInfo').classList.add('hidden');
+  $('thrLoad').classList.add('primary');
+  renderThrStatus();
+  renderUndo();
+  refreshButtons();
+  state.dirty = true;
+}
+
+/**
+ * Attaches one keyboard. `user` is true when the user picked it in the chooser; automatic
+ * attaches (page load, replug) only take the keyboard already in use, or a known model.
+ */
+async function attach(devices, user = false) {
+  const group = pickKeyboard(devices);
+  if (!group.length) return;
+  const pid = group[0].productId;
+  if (!user && (state.productId !== null ? pid !== state.productId : !P.MODELS[pid])) return;
+  const opened = [];
+  for (const d of group) {
     try {
       if (!d.opened) await d.open();
-      d.addEventListener('inputreport', onInputReport);
-      state.devices.push(d);
+      opened.push(d);
     } catch (err) {
       console.warn('open failed', d, err);
     }
   }
-  state.control = state.devices.find(hasControlCollection) || null;
+  if (!opened.length) return;
+  if (pid !== state.productId) {
+    await releaseDevices();
+    state.productId = pid;
+    resetBoardState();
+  }
+  for (const d of opened) {
+    if (state.devices.includes(d)) continue;
+    d.addEventListener('inputreport', onInputReport);
+    state.devices.push(d);
+  }
+  const model = P.MODELS[pid];
+  state.family = model ? model.family : state.family; // unknown: learned from its depth reports
+  if (!state.devices.includes(state.control)) state.control = state.devices.find(hasControlCollection) || null;
   state.lostDevice = false;
   renderDevName();
+  renderModeHint();
   $('dot').classList.toggle('on', state.devices.length > 0);
   $('connectError').classList.add('hidden');
   fillActuationRange();
   if (!state.thresholds.size) restoreThresholds();
+  if (!state.undo) restoreUndo();
+  refreshButtons();
   setTimeout(() => { if (!state.streamSeen && state.devices.length) $('noStream').classList.remove('hidden'); }, 3000);
 }
 
 async function connect() {
   try {
     const devs = await navigator.hid.requestDevice({ filters: [{ vendorId: P.VENDOR_RAZER }] });
-    await attach(devs);
-    if (!state.devices.length && devs.length) throw new Error(tr('errOpen'));
+    if (!devs.length) return; // chooser cancelled
+    await attach(devs, true);
+    if (!state.devices.length || !pickKeyboard(devs).some((d) => state.devices.includes(d))) throw new Error(tr('errOpen'));
   } catch (err) {
     $('connectError').textContent = String(err.message || err);
     $('connectError').classList.remove('hidden');
   }
+}
+
+function onDisconnect(e) {
+  if (!state.devices.includes(e.device)) return;
+  e.device.removeEventListener('inputreport', onInputReport);
+  state.devices = state.devices.filter((d) => d !== e.device);
+  if (state.control === e.device) state.control = null;
+  if (!state.devices.length) {
+    // Keep the keyboard's identity, points and Undo for a replug; end what was live.
+    state.lostDevice = true;
+    state.tracker.interrupt(performance.now());
+    state.streamSeen = false;
+    state.mode = null;
+    state.dirty = true;
+  }
+  $('dot').classList.toggle('on', state.devices.length > 0);
+  renderDevName();
+  renderModeHint();
+  refreshButtons();
 }
 
 // ---------- control channel ----------
@@ -685,8 +820,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // One request at a time: the actuation tab and threshold loading share the control channel.
 let exchangeChain = Promise.resolve();
 function exchange(packet) {
+  // Refuse anything outside the safety allowlist. Writes are checked against the connected
+  // model's family and range from the model table, never a guessed family.
+  const model = P.MODELS[state.productId];
   try {
-    P.checkPacket(packet, state.family || 'v3'); // refuse anything outside the safety allowlist
+    P.checkPacket(packet, model ? model.family : null, P.writeRange(state.productId));
   } catch (err) {
     return Promise.reject(new Error(tr('errSafety', { detail: err.message })));
   }
@@ -704,7 +842,10 @@ function retryable(message) {
 
 async function exchangeNow(packet) {
   const cls = packet[6], cmd = packet[7];
-  const candidates = state.control ? [state.control] : state.devices;
+  const isWrite = cls === P.KEY_ASSIGNMENT.cls && cmd === P.KEY_ASSIGNMENT.set;
+  // Reads may probe the keyboard's interfaces to find the control channel; a write only ever
+  // goes to the one that already answered.
+  const candidates = state.control ? [state.control] : isWrite ? [] : state.devices;
   let lastErr = new Error(tr('errNoControl'));
   for (const dev of candidates) {
     // Synapse shares the control channel while it runs, so a reply can belong to its request.
@@ -716,7 +857,11 @@ async function exchangeNow(packet) {
           const reply = P.parseReply(await dev.receiveFeatureReport(0), cls, cmd);
           if (!reply) throw retryable(tr('errBadReply'));
           if (reply.status === 1) continue;
-          if (reply.status !== 2) throw new Error(tr('errStatus', { s: reply.statusText }));
+          if (reply.status !== 2) {
+            const err = new Error(tr('errStatus', { s: reply.statusText }));
+            err.status = reply.status; // 03 fail / 05 not supported: the keyboard said no
+            throw err;
+          }
           state.control = dev;
           return reply;
         }
@@ -756,7 +901,7 @@ async function activeProfile() {
 
 async function readKey(profile, key) {
   let r = null;
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < 5; attempt++) {
     r = await exchange(P.getKeyAssignmentPacket(profile, key, 0));
     const a = P.parseKeyAssignment(r.args);
     // Another program may have read a different key in between: ask again.
@@ -779,118 +924,250 @@ function showAssignment(a) {
   $('actInfo').classList.remove('hidden');
 }
 
-async function onRead() {
+async function withBusy(fn) {
+  state.busy = true;
+  refreshButtons();
   try {
-    if (!state.devices.length) throw new Error(tr('errConnectFirst'));
-    const key = Number($('actKey').value);
-    const profile = await resolveProfile();
-    currentAssignment = await readKey(profile, key);
-    showAssignment(currentAssignment);
-    const f = P.FAMILIES[state.family || 'v3'];
-    $('actMm').value = f.thresholdToMm(currentAssignment.thrL).toFixed(1);
-    $('actRelMm').value = f.thresholdToMm(currentAssignment.thrH).toFixed(1);
-    $('actWrite').disabled = !$('safetyAgree').checked;
-    actLog(tr('readOk', { key: keyName(key), p: profile }));
-  } catch (err) {
-    actLog(tr('readFail', { err: err.message || err }));
+    await fn();
+  } finally {
+    state.busy = false;
+    refreshButtons();
   }
+}
+
+/** Write needs consent and a fresh read of the selected key and target. */
+function refreshButtons() {
+  const lr = state.lastRead;
+  const fresh = lr && lr.productId === state.productId && lr.key === Number($('actKey').value) && lr.sel === $('actProfile').value;
+  $('actRead').disabled = state.busy;
+  $('thrLoad').disabled = state.busy;
+  $('actUndo').disabled = state.busy;
+  $('actWrite').disabled = state.busy || !$('safetyAgree').checked || !fresh || !state.devices.length;
+}
+
+function requireKnownModel() {
+  if (!state.devices.length) throw new Error(tr('errConnectFirst'));
+  const model = P.MODELS[state.productId];
+  if (!model) throw new Error(tr('errUnknownModel'));
+  return { family: P.FAMILIES[model.family], range: P.writeRange(state.productId) };
+}
+
+async function onRead() {
+  if (state.busy) return;
+  await withBusy(async () => {
+    try {
+      if (!state.devices.length) throw new Error(tr('errConnectFirst'));
+      const key = Number($('actKey').value);
+      const sel = $('actProfile').value;
+      const profile = await resolveProfile();
+      currentAssignment = await readKey(profile, key);
+      showAssignment(currentAssignment);
+      const f = fam();
+      const mmL = f.thresholdToMm(currentAssignment.thrL).toFixed(1);
+      const mmH = f.thresholdToMm(currentAssignment.thrH).toFixed(1);
+      $('actMm').value = mmL;
+      $('actRelMm').value = mmH;
+      // Remember the exact values so an untouched field writes back what was read, not a rounded value.
+      state.lastRead = { productId: state.productId, key, sel, profile, thrL: currentAssignment.thrL, thrH: currentAssignment.thrH, mmL, mmH };
+      actLog(tr('readOk', { key: keyName(key), p: profile }));
+    } catch (err) {
+      actLog(tr('readFail', { err: err.message || err }));
+    }
+  });
+}
+
+/** Turns the two mm fields into thresholds, keeping exact read values for untouched fields. */
+function wantedPoints(f, range, key, profile) {
+  const lr = state.lastRead && state.lastRead.productId === state.productId && state.lastRead.key === key
+    && state.lastRead.profile === profile ? state.lastRead : null;
+  const loMm = mmBound(f, range, range.lo), hiMm = mmBound(f, range, range.hi);
+  const mmStr = $('actMm').value.trim();
+  const mmNum = Number(mmStr);
+  const thrL = lr && mmStr === lr.mmL ? lr.thrL : mmStr !== '' && Number.isFinite(mmNum) ? f.mmToThreshold(mmNum) : NaN;
+  if (!(thrL >= range.lo && thrL <= range.hi)) throw new Error(tr('errRange', { lo: loMm, hi: hiMm }));
+  const relStr = $('actRelMm').value.trim();
+  let thrH = null;
+  if (relStr !== '') {
+    const rel = Number(relStr);
+    thrH = lr && relStr === lr.mmH ? lr.thrH : Number.isFinite(rel) ? (rel <= 0 ? 0 : f.mmToThreshold(rel)) : NaN;
+    if (!(thrH >= f.minRelease && thrH <= thrL - f.minReleaseGap)) {
+      throw new Error(tr('errRelease', { mm: f.thresholdToMm(thrL).toFixed(2) }));
+    }
+  }
+  return { thrL, thrH };
 }
 
 async function onWrite() {
-  try {
-    const key = Number($('actKey').value);
-    const profile = await resolveProfile();
-    const f = P.FAMILIES[state.family || 'v3'];
-    const mm = Number($('actMm').value);
-    const [lo, hi] = f.thresholdRangeMm;
-    if (!(mm >= lo && mm <= hi)) throw new Error(tr('errRange', { lo, hi }));
-    const thrL = f.mmToThreshold(mm);
-    let thrH = null;
-    if ($('actRelMm').value.trim() !== '') {
-      const rel = Number($('actRelMm').value);
-      thrH = rel <= 0 ? 0 : f.mmToThreshold(rel);
-      if (!(rel >= 0) || thrH > thrL - f.minReleaseGap) {
-        throw new Error(tr('errRelease', { mm }));
-      }
-    }
-    if (!$('safetyAgree').checked) throw new Error(tr('errConsent'));
-    if (await synapseLikelyRunning() && !confirm(tr('confirmSynapse'))) return;
-    if (profile !== 0 && !confirm(tr('confirmFlash', { p: profile }))) return;
+  if (state.busy) return;
+  await withBusy(async () => {
+    let sent = false;
+    try {
+      const { family: f, range } = requireKnownModel();
+      if (!$('safetyAgree').checked) throw new Error(tr('errConsent'));
+      const key = Number($('actKey').value);
+      const profile = await resolveProfile();
+      const { thrL, thrH } = wantedPoints(f, range, key, profile);
+      if (await synapseLikelyRunning() && !confirm(tr('confirmSynapse'))) return;
+      if (profile !== 0 && !confirm(tr('confirmFlash', { p: profile }))) return;
 
-    const before = await readKey(profile, key); // always start from the device's current value
-    const wanted = P.withActuation(before, thrL, thrH, f.minReleaseGap);
-    await exchange(P.setKeyAssignmentPacket(wanted));
-    const after = await readKey(profile, key);
-    currentAssignment = after;
-    showAssignment(after);
-    const ok = after.thrL === wanted.thrL && after.thrH === wanted.thrH && after.fnId === before.fnId;
-    if (state.thresholds.size && after.thrL > 0) {
-      state.thresholds.set(key, { thrL: after.thrL, thrH: after.thrH });
-      applyThresholds(state.thresholds);
-      saveThresholds(state.thrProfile ?? profile);
+      const before = await readKey(profile, key); // always start from the device's current value
+      const wanted = P.withActuation(before, thrL, thrH, f.minReleaseGap, f.minRelease);
+      if (wanted.thrL === before.thrL && wanted.thrH === before.thrH) {
+        actLog(tr('writeSame', { key: keyName(key) }));
+        return;
+      }
+      // Undo must be able to put `before` back; warn now if the safety policy would refuse that.
+      let undoable = true;
+      try {
+        P.checkPacket(P.setKeyAssignmentPacket(before), P.MODELS[state.productId].family, range);
+      } catch (err) {
+        undoable = false;
+        const mmOf = (t) => f.thresholdToMm(t).toFixed(2);
+        if (!confirm(tr('confirmNoUndo', { a: mmOf(before.thrL), b: mmOf(before.thrH) }))) return;
+      }
+      if (undoable) {
+        // Recorded before sending, so a write whose result cannot be confirmed can still be undone.
+        // An earlier unconfirmed write to the same key keeps the true original values.
+        const prev = state.undo;
+        const same = prev && prev.pending && prev.productId === state.productId && prev.profile === profile && prev.key === key;
+        setUndo({ productId: state.productId, profile, key, thrL: same ? prev.thrL : before.thrL, thrH: same ? prev.thrH : before.thrH, pending: true });
+      }
+      sent = true;
+      await exchange(P.setKeyAssignmentPacket(wanted));
+      const after = await readKey(profile, key);
+      if (undoable && state.undo) setUndo({ ...state.undo, pending: false });
+      currentAssignment = after;
+      showAssignment(after);
+      state.lastRead = null;
+      const ok = after.thrL === wanted.thrL && after.thrH === wanted.thrH && after.fnId === before.fnId;
+      updateMonitorPoints(profile, key, after);
+      const mmOf = (t) => f.thresholdToMm(t).toFixed(2);
+      actLog(`${tr(ok ? 'writeOk' : 'writeMismatch')}: ` + tr('writeDetail', { key: keyName(key), p: profile,
+        a: mmOf(before.thrL), b: mmOf(after.thrL), c: mmOf(before.thrH), d: mmOf(after.thrH) }));
+    } catch (err) {
+      actLog(tr(sent ? 'writeUnconfirmed' : 'writeFail', { err: err.message || err }));
     }
-    const mmOf = (t) => f.thresholdToMm(t).toFixed(2);
-    actLog(`${tr(ok ? 'writeOk' : 'writeMismatch')}: ` + tr('writeDetail', { key: keyName(key), p: profile,
-      a: mmOf(before.thrL), b: mmOf(after.thrL), c: mmOf(before.thrH), d: mmOf(after.thrH) }));
-    state.undo = { profile, key, thrL: before.thrL, thrH: before.thrH };
-    renderUndo();
-  } catch (err) {
-    actLog(tr('writeFail', { err: err.message || err }));
-  }
+  });
 }
 
-/** Driver mode means Synapse decides presses and may write its own values back. */
+/** Keeps the monitor's points in step with a write that hit the profile they were loaded from. */
+function updateMonitorPoints(profile, key, after) {
+  if (!state.thresholds.size) return;
+  if (profile !== state.thrProfile) {
+    thrStatus('thrStale');
+    return;
+  }
+  if (after.thrL > 0) state.thresholds.set(key, { thrL: after.thrL, thrH: after.thrH });
+  else state.thresholds.delete(key); // 0/0: the host decides, nothing to judge against
+  applyThresholds(state.thresholds);
+  saveThresholds(state.thrProfile);
+}
+
+/** Driver mode means Synapse is running and may write its own values back. */
 async function synapseLikelyRunning() {
   try {
     const r = await exchange(P.getDeviceModePacket());
+    state.mode = r.args[0];
+    renderModeHint();
     if (r.args[0] === P.DEVICE_MODE.driver) return true;
-    if (r.args[0] === P.DEVICE_MODE.hardware) return false;
+    if (r.args[0] === P.DEVICE_MODE.hardware) {
+      state.streamSeen = false;
+      return false;
+    }
   } catch (err) { /* unanswered: judge by the depth stream below */ }
   return state.streamSeen; // the depth stream only flows in driver mode
+}
+
+const UNDO_KEY = 'rsf.undo.v1';
+
+function setUndo(u) {
+  state.undo = u;
+  try {
+    if (u) localStorage.setItem(UNDO_KEY, JSON.stringify(u));
+    else localStorage.removeItem(UNDO_KEY);
+  } catch (err) { /* Undo just won't survive a reload */ }
+  renderUndo();
+}
+
+/** Brings back the last Undo after a reload, for the same keyboard model only. */
+function restoreUndo() {
+  try {
+    const u = JSON.parse(localStorage.getItem(UNDO_KEY) || 'null');
+    const byte = (v) => Number.isInteger(v) && v >= 0 && v <= 255;
+    if (u && u.productId === state.productId && Number.isInteger(u.profile) && u.profile >= 0 && u.profile <= 6
+        && P.KEY_NAMES[u.key] && byte(u.thrL) && byte(u.thrH)) {
+      state.undo = { productId: u.productId, profile: u.profile, key: u.key, thrL: u.thrL, thrH: u.thrH, pending: !!u.pending };
+      renderUndo();
+    }
+  } catch (err) { /* ignore unreadable record */ }
 }
 
 function renderUndo() {
   const u = state.undo;
   $('actUndo').classList.toggle('hidden', !u);
   if (!u) return;
-  const f = fam();
-  $('actUndo').textContent = tr('undoBtn', { key: keyName(u.key), a: f.thresholdToMm(u.thrL).toFixed(2), b: f.thresholdToMm(u.thrH).toFixed(2) });
+  const model = P.MODELS[u.productId];
+  const f = model ? P.FAMILIES[model.family] : fam();
+  $('actUndo').textContent = tr('undoBtn', { key: keyName(u.key), a: f.thresholdToMm(u.thrL).toFixed(2), b: f.thresholdToMm(u.thrH).toFixed(2) })
+    + (u.profile === 0 ? '' : ` · ${tr('profSlot', { n: u.profile })}`);
 }
 
-/** Puts back exactly the points the last write replaced, on the same key and profile. */
+/** Puts back exactly the points the last write replaced, on the same keyboard, key and profile. */
 async function onUndo() {
   const u = state.undo;
-  if (!u) return;
-  try {
-    if (u.profile !== 0 && !confirm(tr('confirmFlash', { p: u.profile }))) return;
-    const now = await readKey(u.profile, u.key);
-    await exchange(P.setKeyAssignmentPacket({ ...now, thrL: u.thrL, thrH: u.thrH }));
-    const after = await readKey(u.profile, u.key);
-    const ok = after.thrL === u.thrL && after.thrH === u.thrH;
-    if (state.thresholds.has(u.key) && after.thrL > 0) {
-      state.thresholds.set(u.key, { thrL: after.thrL, thrH: after.thrH });
-      applyThresholds(state.thresholds);
-      saveThresholds(state.thrProfile ?? u.profile);
+  if (!u || state.busy) return;
+  await withBusy(async () => {
+    let sent = false;
+    try {
+      requireKnownModel();
+      if (u.productId !== state.productId) throw new Error(tr('errUndoOtherDevice'));
+      if (await synapseLikelyRunning() && !confirm(tr('confirmSynapse'))) return;
+      if (u.profile !== 0 && !confirm(tr('confirmFlash', { p: u.profile }))) return;
+      const now = await readKey(u.profile, u.key);
+      if (now.thrL !== u.thrL || now.thrH !== u.thrH) {
+        sent = true;
+        await exchange(P.setKeyAssignmentPacket({ ...now, thrL: u.thrL, thrH: u.thrH }));
+      }
+      const after = await readKey(u.profile, u.key);
+      const ok = after.thrL === u.thrL && after.thrH === u.thrH;
+      updateMonitorPoints(u.profile, u.key, after);
+      if (currentAssignment && currentAssignment.key === u.key) { currentAssignment = after; showAssignment(after); }
+      state.lastRead = null;
+      actLog(tr(ok ? 'undoOk' : 'writeMismatch') + `: ${keyName(u.key)}`);
+      if (ok && state.undo === u) setUndo(null);
+    } catch (err) {
+      actLog(tr(sent ? 'undoUnconfirmed' : 'undoFail', { err: err.message || err }));
     }
-    if (currentAssignment && currentAssignment.key === u.key) { currentAssignment = after; showAssignment(after); }
-    actLog(tr(ok ? 'undoOk' : 'writeMismatch') + `: ${keyName(u.key)}`);
-    state.undo = null;
-    renderUndo();
-  } catch (err) {
-    actLog(tr('undoFail', { err: err.message || err }));
+  });
+}
+
+/** The shortest mm value a user can type that still converts to a threshold inside the range. */
+function mmBound(f, range, thr) {
+  const mm = f.thresholdToMm(thr);
+  for (const d of [1, 2, 3]) {
+    const t = f.mmToThreshold(Number(mm.toFixed(d)));
+    if (t >= range.lo && t <= range.hi) return mm.toFixed(d);
   }
+  return mm.toFixed(3);
 }
 
 function fillActuationRange() {
-  const f = P.FAMILIES[state.family || 'v3'];
-  $('actMm').min = f.thresholdRangeMm[0];
-  $('actMm').max = f.thresholdRangeMm[1];
+  const f = fam();
+  const range = P.writeRange(state.productId);
+  if (!range) {
+    $('actRange').textContent = state.productId === null ? '' : tr('errUnknownModel');
+    return;
+  }
+  const lo = mmBound(f, range, range.lo), hi = mmBound(f, range, range.hi);
+  $('actMm').min = lo;
+  $('actMm').max = hi;
+  $('actRange').textContent = tr('rangeNote', { lo, hi });
 }
 
 function selectActuationKey(id) {
   $('actKey').value = String(id);
   for (const [k, el] of keyEls) el.classList.toggle('selected', k === id);
-  $('actWrite').disabled = true;
+  refreshButtons(); // a write needs a fresh read of this key
 }
 
 function fillKeySelect() {
@@ -905,7 +1182,7 @@ function applyLanguage() {
   I18N.apply(document);
   for (const [id, el] of keyEls) {
     el.title = `${keyName(id)} (fwID ${id})`;
-    el.querySelector('.lbl').textContent = I18N.strings[I18N.lang].keyNames[id] || P.shortKeyName(id);
+    el.querySelector('.lbl').textContent = langStrings().keyNames[id] || P.shortKeyName(id);
   }
   fillKeySelect();
   renderDevName();
@@ -913,6 +1190,7 @@ function applyLanguage() {
   renderThrStatus();
   if (currentAssignment) showAssignment(currentAssignment);
   renderUndo();
+  fillActuationRange();
   chart.readout = '';
   state.dirty = true;
 }
@@ -932,7 +1210,7 @@ function exportCsv() {
   for (const r of t.ranking()) {
     const thr = thrRaw(r.id);
     lines.push(['summary', csvCell(keyName(r.id)), r.id, '', r.totalMs.toFixed(1), r.peak, mmOr(r.peak),
-      thr ? (r.activations ? 'yes' : 'no') : '', r.activations, '', '', thr ? mmOr(thr.press) : '', thr ? mmOr(thr.release) : ''].join(','));
+      r.activations ? 'yes' : thr && r.judgedTouches ? 'no' : '', r.activations, '', '', thr ? mmOr(thr.press) : '', thr ? mmOr(thr.release) : ''].join(','));
   }
   const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv' });
   const a = document.createElement('a');
@@ -963,6 +1241,7 @@ function init() {
     $('tab-actuation').classList.toggle('hidden', b.dataset.tab !== 'actuation');
   }));
   $('reset').addEventListener('click', () => { state.tracker.reset(); state.dirty = true; });
+  refreshButtons();
   $('noise').addEventListener('change', () => { state.tracker.noiseFloor = Math.max(0, Number($('noise').value) || 0); });
   $('csv').addEventListener('click', exportCsv);
   $('thrLoad').addEventListener('click', loadThresholds);
@@ -976,27 +1255,23 @@ function init() {
   try { $('safetyAgree').checked = localStorage.getItem('rsf.safetyAgreed.v1') === '1'; } catch (err) { /* ask again */ }
   $('safetyAgree').addEventListener('change', () => {
     try { localStorage.setItem('rsf.safetyAgreed.v1', $('safetyAgree').checked ? '1' : '0'); } catch (err) { /* not remembered */ }
-    $('actWrite').disabled = !$('safetyAgree').checked || !currentAssignment;
+    refreshButtons();
   });
   $('actRelSuggest').addEventListener('click', () => {
     const mm = Number($('actMm').value);
     if (mm > 0) $('actRelMm').value = Math.max(0, mm - 0.2).toFixed(1);
   });
-  $('actProfile').addEventListener('change', () => { $('actWrite').disabled = true; });
+  $('actProfile').addEventListener('change', refreshButtons);
 
   if (!('hid' in navigator)) {
     $('unsupported').classList.remove('hidden');
     $('connect').disabled = true;
   } else {
     $('connect').addEventListener('click', connect);
-    navigator.hid.getDevices().then(attach);
-    navigator.hid.addEventListener('disconnect', (e) => {
-      state.devices = state.devices.filter((d) => d !== e.device);
-      if (state.control === e.device) state.control = null;
-      $('dot').classList.toggle('on', state.devices.length > 0);
-      if (!state.devices.length) state.lostDevice = true;
-      renderDevName();
-    });
+    navigator.hid.getDevices().then((devs) => attach(devs));
+    // A replugged keyboard that was already allowed comes back by itself.
+    navigator.hid.addEventListener('connect', (e) => attach([e.device]));
+    navigator.hid.addEventListener('disconnect', onDisconnect);
   }
   requestAnimationFrame(render);
 }

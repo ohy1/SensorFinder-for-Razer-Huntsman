@@ -1,4 +1,4 @@
-// Run with: node --test tests/
+// Run with: node --test "tests/*.test.js"  (from the repo root)
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const P = require('../web/razer-protocol.js');
@@ -198,19 +198,115 @@ test('safety allowlist refuses everything but the four known commands', () => {
   P.checkPacket(P.getKeyAssignmentPacket(0, 127), 'v3');
   P.checkPacket(P.buildPacket(0x05, 0x84, 1), 'v3');
   P.checkPacket(P.getDeviceModePacket(), 'v3');
+  const v3 = P.writeRange(0x02cf);
   const ok = { profile: 1, key: 127, layer: 0, thrL: 173, thrH: 160, fnId: 2, fnData: [8, 0] };
-  P.checkPacket(P.setKeyAssignmentPacket(ok), 'v3');
-  P.checkPacket(P.setKeyAssignmentPacket({ ...ok, thrL: 0, thrH: 0 }), 'v3'); // undo to "host decides"
+  P.checkPacket(P.setKeyAssignmentPacket(ok), 'v3', v3);
+  P.checkPacket(P.setKeyAssignmentPacket({ ...ok, thrL: 0, thrH: 0 }), 'v3', v3); // undo to "host decides"
 
   // Mode switch (01 = bootloader), factory calibration write, flash, lighting: refused.
   for (const [cls, cmd, args] of [[0x00, 0x04, [0x01, 0]], [0xfe, 0x28, []], [0x06, 0x09, []], [0x0f, 0x02, []], [0x05, 0x04, [1]]]) {
     assert.throws(() => P.checkPacket(P.buildPacket(cls, cmd, args.length, args), 'v3'), P.SafetyError);
   }
   // Writes outside what the UI produces: refused.
-  assert.throws(() => P.checkPacket(P.setKeyAssignmentPacket({ ...ok, layer: 1 }), 'v3'), P.SafetyError);
-  assert.throws(() => P.checkPacket(P.setKeyAssignmentPacket({ ...ok, profile: 7 }), 'v3'), P.SafetyError);
-  assert.throws(() => P.checkPacket(P.setKeyAssignmentPacket({ ...ok, key: 200 }), 'v3'), P.SafetyError);
-  assert.throws(() => P.checkPacket(P.setKeyAssignmentPacket({ ...ok, thrH: 170 }), 'v3'), P.SafetyError);
+  for (const bad of [{ layer: 1 }, { profile: 7 }, { key: 200 }, { thrH: 170 }, { thrL: 3, thrH: 0 }]) {
+    assert.throws(() => P.checkPacket(P.setKeyAssignmentPacket({ ...ok, ...bad }), 'v3', v3), P.SafetyError, JSON.stringify(bad));
+  }
+  // A write for a model the tool does not know is refused.
+  assert.throws(() => P.checkPacket(P.setKeyAssignmentPacket(ok), 'v3', null), P.SafetyError);
+  assert.throws(() => P.checkPacket(P.setKeyAssignmentPacket(ok), undefined, v3), P.SafetyError);
   // Wrong length.
   assert.throws(() => P.checkPacket(new Uint8Array(10), 'v3'), P.SafetyError);
+});
+
+test('write ranges follow the model: V2 firmware clamp, low-profile 2.8 mm travel', () => {
+  assert.deepEqual(P.writeRange(0x0266), { lo: 15, hi: 250 });
+  assert.deepEqual(P.writeRange(0x02cf), { lo: 6, hi: 255 });
+  const lp = P.writeRange(0x02e6);
+  assert.equal(lp.hi, 179);
+  assert.ok(Math.abs(P.FAMILIES.v3.thresholdToMm(lp.hi) - 2.8) < 0.01);
+  assert.equal(P.writeRange(0x9999), null);
+  const ok = { profile: 0, key: 127, layer: 0, thrL: 224, thrH: 211, fnId: 2, fnData: [8, 0] };
+  P.checkPacket(P.setKeyAssignmentPacket(ok), 'v3', P.writeRange(0x02cf));
+  assert.throws(() => P.checkPacket(P.setKeyAssignmentPacket(ok), 'v3', lp), P.SafetyError); // 3.5 mm on a 2.8 mm switch
+  // V2: release must stay >= 5 and 10 below actuation.
+  const v2 = P.writeRange(0x0266);
+  P.checkPacket(P.setKeyAssignmentPacket({ ...ok, thrL: 15, thrH: 5 }), 'v2', v2);
+  assert.throws(() => P.checkPacket(P.setKeyAssignmentPacket({ ...ok, thrL: 15, thrH: 4 }), 'v2', v2), P.SafetyError);
+  assert.throws(() => P.checkPacket(P.setKeyAssignmentPacket({ ...ok, thrL: 251, thrH: 100 }), 'v2', v2), P.SafetyError);
+});
+
+test('withActuation keeps the V2 release floor', () => {
+  const a = { profile: 0, key: 31, layer: 0, thrL: 0, thrH: 0, fnId: 2, fnData: [0, 4] };
+  assert.equal(P.withActuation(a, 61, null, 10, 5).thrH, 5); // 0/0 from Synapse -> firmware floor
+  assert.equal(P.withActuation({ ...a, thrH: 200 }, 61, null, 10, 5).thrH, 51);
+  assert.throws(() => P.withActuation(a, 61, 4, 10, 5), RangeError);
+});
+
+test('unknown models are only guessed as V3 from the V3 depth report', () => {
+  assert.equal(P.familyOf(0x9999, 0x07), null); // V3 boards also send vendor report 07
+  assert.equal(P.familyOf(0x9999, 0x0b), 'v3');
+  assert.equal(P.familyOf(0x0266, 0x0b), 'v2'); // a known PID is never re-guessed
+});
+
+test('touches that started before the points were loaded are not judged "not registered"', () => {
+  const t = new P.DepthTracker();
+  t.update([{ id: 31, raw: 5000 }], 0); // pressed past where the point will be
+  t.setThresholds([[31, { press: 4000, release: 3000 }]]);
+  t.update([], 10);
+  assert.equal(t.events[0].fired, null);
+  assert.equal(t.events[0].marginRaw, null);
+  assert.equal(t.stats.get(31).judgedTouches, 0);
+  // The next touch is judged.
+  t.update([{ id: 31, raw: 2000 }], 20);
+  t.update([], 30);
+  assert.equal(t.events[1].fired, false);
+  assert.equal(t.events[1].marginRaw, 2000);
+  assert.equal(t.stats.get(31).judgedPeak, 2000);
+  // An input seen mid-touch still counts as registered.
+  t.update([{ id: 18, raw: 100 }], 40);
+  t.setThresholds([[31, { press: 4000, release: 3000 }], [18, { press: 200, release: 150 }]]);
+  t.update([{ id: 18, raw: 300 }], 50);
+  t.update([], 60);
+  assert.equal(t.events[2].fired, true);
+});
+
+test('interrupt closes held keys and inputs without inflating durations', () => {
+  const t = new P.DepthTracker();
+  t.setThresholds([[127, { press: 100, release: 90 }]]);
+  t.update([{ id: 127, raw: 150 }], 0);
+  t.interrupt(40);
+  assert.equal(t.active.size, 0);
+  assert.equal(t.open.size, 0);
+  assert.equal(t.live.size, 0);
+  const ev = t.events[0];
+  assert.equal(ev.interrupted, true);
+  assert.equal(ev.durationMs, 40);
+  assert.equal(ev.heldMs, 40);
+  assert.equal(ev.fired, true);
+  // Reports after the replug start a fresh touch.
+  t.update([{ id: 127, raw: 50 }], 5000);
+  t.update([], 5010);
+  assert.equal(t.events[1].durationMs, 10);
+});
+
+test('points removed while an input is on end the input', () => {
+  const t = new P.DepthTracker();
+  t.setThresholds([[127, { press: 100, release: 90 }]]);
+  t.update([{ id: 127, raw: 150 }], 0);
+  t.setThresholds([]);
+  assert.equal(t.active.size, 0);
+  assert.deepEqual(t.onSpans.get(127), [[0, 0]]);
+});
+
+test('clearing while a key is held does not judge the rest of that touch', () => {
+  const t = new P.DepthTracker();
+  t.setThresholds([[127, { press: 100, release: 90 }]]);
+  t.update([{ id: 127, raw: 95 }], 0); // held between release and actuation
+  t.reset();
+  t.update([{ id: 127, raw: 95 }], 10);
+  t.update([], 20);
+  assert.equal(t.events[0].fired, null);
+  t.update([{ id: 127, raw: 50 }], 30); // a new touch is judged again
+  t.update([], 40);
+  assert.equal(t.events[1].fired, false);
 });

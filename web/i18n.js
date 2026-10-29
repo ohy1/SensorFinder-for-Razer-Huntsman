@@ -30,7 +30,7 @@
       thrNotLoaded: '아직 불러오지 않음 — 불러오면 입력이 실제로 됐는지 판정합니다',
       legendSense: '감지 중(입력 지점 전)',
       legendOn: '입력 중',
-      legendRestHtml: '· 테두리: <b style="color: var(--warn)">주황</b> = 감지만 되고 입력된 적 없음(미세 접촉), <b class="ok">초록</b> = 입력된 적 있음 · 숫자 = 감지 횟수 · 감지된 키 안의 실선 = 입력 지점, 점선 = 해제 지점. 키를 클릭하면 아래 그래프에 표시됩니다.',
+      legendRestHtml: '· 테두리: <b style="color: var(--warn)">주황</b> = 감지만 되고 입력된 적 없음(미세 접촉), <b class="ok">초록</b> = 입력된 적 있음 (색 테두리는 입력/해제 지점을 불러온 뒤의 기록에만) · 숫자 = 감지 횟수 · 감지된 키 안의 실선 = 입력 지점, 점선 = 해제 지점. 키를 클릭하면 아래 그래프에 표시됩니다.',
       noStreamHtml: '연결은 됐지만 깊이 데이터가 들어오지 않습니다. 깊이 스트림은 키보드가 <b>드라이버 모드</b>일 때만 나옵니다. <b>Razer Synapse를 실행</b>해 둔 상태(트레이 포함)에서 키를 눌러 보세요.',
       extraKey: '레이아웃 밖 키: {name} · {n}회 · 현재 {live}',
 
@@ -42,10 +42,11 @@
       axisNow: '지금',
       chartAct: '입력 {mm} mm',
       chartRel: '해제 {mm} mm',
-      tipAgo: '{s} s 전 · {mm} mm',
+      tipAgo: '{s} s 전 · {depth}',
       tipOn: ' · 입력 중',
       tipOff: ' · 입력 아님',
-      readout: '현재 {cur} mm · 최근 5초 최대 {peak} mm',
+      readout: '현재 {cur} · 최근 5초 최대 {peak}',
+      atRest: '쉬는 중',
       readoutPoints: ' · 입력 {on} / 해제 {off} mm',
       stUnknown: '입력/해제 지점 미확인 — 위의 "키보드에서 불러오기"를 누르세요',
       stOn: '● 입력 중',
@@ -74,6 +75,7 @@
       verdictFiredDetail: '+{ms} ms, {held} 유지',
       verdictMissed: '미입력',
       verdictShort: '{mm} mm 모자람',
+      verdictInterrupted: '끊김 (연결 해제)',
 
       rawTitle: '원시 HID 리포트 (최근 20개)',
       rawShow: '표시',
@@ -84,13 +86,16 @@
       thrLoaded: '프로필 {p}에서 {n}개 키를 불러왔습니다 ({time})',
       thrSkipped: ' · {n}개는 해당 없음',
       thrFellBack: ' · Synapse 실행 중이라 활성 슬롯 번호를 읽지 못해 RAM(같은 값)에서 불러왔습니다',
+      thrFailedKeys: ' · {n}개는 읽지 못함 (저장된 값은 그대로 둠)',
+      thrInterrupted: '키보드 연결이 끊겨 불러오기를 멈췄습니다 (이전 값 유지)',
+      thrStale: '다른 프로필에 썼습니다 — 모니터 지점은 다시 불러오세요',
       thrFailed: '불러오기 실패: {err} — Synapse를 잠시 종료한 뒤 다시 시도해 보세요',
       errAllZero: '이 프로필은 모든 키의 입력 지점이 0입니다(PC에서 판정하는 설정). 대상을 다른 프로필로 바꿔 보세요',
       errNoneRead: '{n}개 키를 모두 읽지 못했습니다 (마지막 오류: {err})',
 
       actTitle: '키별 입력 지점 읽기 / 설정',
       actIntroHtml: 'Synapse가 조절 대상에서 빼놓은 키(윈도우 키 등)도 펌웨어 명령 <code>02:92</code> / <code>02:12</code>로 직접 읽고 쓸 수 있습니다.',
-      actWarnHtml: '<b>먼저 Synapse를 완전히 종료하세요</b> (트레이 아이콘 → 종료). Synapse가 실행 중이면 키보드는 드라이버 모드이고, 입력 판정을 Synapse가 PC에서 직접 하므로 키보드에 적은 값이 무시됩니다. Synapse가 시작하거나 종료되며 모드를 바꾸면 <b>프로필 0(RAM)</b> 값은 활성 프로필 값으로 덮어써집니다.',
+      actWarnHtml: '<b>먼저 Synapse를 완전히 종료하세요</b> (트레이 아이콘 → 종료). Synapse가 실행 중이면 같은 통로로 키보드와 통신하고, 모드를 바꾸거나 자기 설정을 다시 쓰면서 <b>프로필 0(RAM)</b> 값을 덮어쓸 수 있습니다. 활성 프로필 번호도 Synapse 실행 중에는 읽히지 않습니다. (V3 Pro 8KHz에서는 Synapse를 끈 상태로 슬롯에 저장한 윈도우 키 값이 Synapse를 켠 뒤에도 적용되는 것을 확인했습니다.)',
       actKey: '키',
       actTarget: '대상',
       actOptRam: '프로필 0 — RAM (재연결하면 원래대로)',
@@ -101,7 +106,8 @@
       actSuggest: '추천값',
       actSuggestTitle: '입력 지점보다 0.2 mm 얕게',
       actApply: '적용',
-      actHelpHtml: '입력 지점: 값이 클수록 더 깊이 눌러야 입력됩니다 (V3 계열 0.1–4.0 mm, V2 계열 1.5–3.6 mm).<br>해제 지점: 키가 이 깊이보다 위로 올라와야 떼어진 것으로 처리됩니다. 입력 지점보다 0.1 mm 이상 얕아야 하고, 0.1–0.2 mm 차이가 일반적입니다. 차이가 너무 작으면 경계에서 입력이 떨릴 수 있습니다. 비워 두면 기존 값을 유지합니다.',
+      actHelpHtml: '입력 지점: 값이 클수록 더 깊이 눌러야 입력됩니다.<br>해제 지점: 키가 이 깊이보다 위로 올라와야 떼어진 것으로 처리됩니다. 입력 지점보다 0.1 mm 이상 얕아야 하고, 0.1–0.2 mm 차이가 일반적입니다. 차이가 너무 작으면 경계에서 입력이 떨릴 수 있습니다. 비워 두면 기존 값을 유지합니다. 읽어 온 값을 그대로 두면 정확히 그 값이 유지됩니다.',
+      rangeNote: '이 키보드에서 설정할 수 있는 입력 지점: {lo}–{hi} mm',
       dtKey: '키',
       dtProfile: '프로필',
       profRam: '0 (RAM)',
@@ -115,10 +121,16 @@
       writeMismatch: '적용했지만 읽어 온 값이 다름',
       writeDetail: '{key} 프로필 {p} 입력 {a} → {b} mm, 해제 {c} → {d} mm',
       writeFail: '적용 실패: {err}',
+      writeUnconfirmed: '쓰기 결과를 확인하지 못했습니다 — 값이 이미 바뀌었을 수 있습니다. "현재 값 읽기"로 확인하고, 필요하면 되돌리기를 누르세요 ({err})',
+      writeSame: '{key}: 이미 같은 값이라 쓰지 않았습니다',
+      confirmNoUndo: '지금 값({a} / {b} mm)은 이 도구의 안전 범위 밖이라, 바꾼 뒤 되돌리기로 이 값을 다시 쓸 수 없습니다(Synapse에서 프로필을 다시 적용하면 복구됩니다).\n\n계속할까요?',
+      undoUnconfirmed: '되돌리기 결과를 확인하지 못했습니다 — "현재 값 읽기"로 확인하세요 ({err})',
+      errUndoOtherDevice: '되돌리기 기록이 다른 키보드의 것이라 쓰지 않았습니다',
+      errUnknownModel: '확인되지 않은 키보드 모델이라 쓰기를 막았습니다 (읽기와 모니터는 사용할 수 있습니다)',
       confirmFlash: '프로필 슬롯 {p}의 플래시에 저장합니다. 계속할까요?',
       confirmSynapse: 'Razer Synapse가 실행 중인 것으로 보입니다(드라이버 모드).\n\n지금 쓰면 Synapse가 프로필을 다시 적용할 때 값이 원래대로 돌아가거나, 적용되지 않을 수 있습니다. 플래시 저장은 Synapse를 종료한 뒤에 하세요.\n\n그래도 계속할까요?',
       safetyTitle: '쓰기 전에 확인하세요',
-      safetyHtml: '<ul style="margin: 0; padding-left: 18px"><li>이 도구는 Razer와 관계없는 비공식 도구이며, 사용에 따른 결과는 사용자 책임입니다(MIT 라이선스, 보증 없음).</li><li>보내는 명령은 키 지점 읽기·쓰기와 상태 읽기 4가지뿐입니다. 펌웨어, 모드 전환, 센서 보정 명령은 코드에서 차단됩니다.</li><li>먼저 <b>프로필 0(RAM)</b>으로 시험하세요. 키보드를 다시 꽂으면 원래대로 돌아갑니다.</li><li>문제가 생기면: 키보드 재연결 → <b>되돌리기</b> 버튼 → Synapse에서 프로필 다시 적용 순서로 복구하세요.</li></ul>',
+      safetyHtml: '<ul style="margin: 0; padding-left: 18px"><li>이 도구는 Razer와 관계없는 비공식 도구이며, 사용에 따른 결과는 사용자 책임입니다(MIT 라이선스, 보증 없음).</li><li>보내는 명령은 키 지점 읽기·쓰기와 상태 읽기 4가지뿐입니다. 펌웨어, 모드 전환, 센서 보정 명령은 코드에서 차단되고, 쓰기는 확인된 모델과 그 모델의 범위 안에서만 됩니다.</li><li>먼저 <b>프로필 0(RAM)</b>으로 시험하세요. 키보드를 다시 꽂으면 원래대로 돌아갑니다.</li><li>문제가 생기면: RAM 값은 키보드 재연결로 돌아갑니다. 플래시 값은 연결된 상태에서 <b>되돌리기</b>를 누르세요(연결이 끊겼다면 먼저 <b>키보드 연결</b>). 되돌리기는 마지막 쓰기 1회분이며 새로고침 후에도 남습니다. 그래도 안 되면 Synapse에서 프로필을 다시 적용하세요.</li></ul>',
       safetyAgree: '위 내용을 이해했고, 사용 결과에 대한 책임이 저에게 있음에 동의합니다',
       safetyLink: '안전 정책',
       errConsent: '쓰기 전에 안전 확인 항목에 동의해 주세요',
@@ -167,7 +179,7 @@
       thrNotLoaded: 'Not loaded yet — load them to see whether presses really registered',
       legendSense: 'Sensed (before actuation)',
       legendOn: 'Input on',
-      legendRestHtml: '· Border: <b style="color: var(--warn)">orange</b> = sensed but never registered (light contact), <b class="ok">green</b> = registered at least once · number = times sensed · in sensed keys, solid line = actuation point, dashed = release point. Click a key to graph it below.',
+      legendRestHtml: '· Border: <b style="color: var(--warn)">orange</b> = sensed but never registered (light contact), <b class="ok">green</b> = registered at least once (borders only for touches recorded after the points were loaded) · number = times sensed · in sensed keys, solid line = actuation point, dashed = release point. Click a key to graph it below.',
       noStreamHtml: 'Connected, but no depth data is coming in. The keyboard only streams depth in <b>driver mode</b>. Keep <b>Razer Synapse running</b> (the tray icon is enough) and press a key.',
       extraKey: 'Key outside the layout: {name} · {n}× · now {live}',
 
@@ -179,10 +191,11 @@
       axisNow: 'now',
       chartAct: 'Actuation {mm} mm',
       chartRel: 'Release {mm} mm',
-      tipAgo: '{s} s ago · {mm} mm',
+      tipAgo: '{s} s ago · {depth}',
       tipOn: ' · input on',
       tipOff: ' · no input',
-      readout: 'Now {cur} mm · 5 s max {peak} mm',
+      readout: 'Now {cur} · 5 s max {peak}',
+      atRest: 'at rest',
       readoutPoints: ' · actuation {on} / release {off} mm',
       stUnknown: 'points unknown — press "Load from keyboard" above',
       stOn: '● input on',
@@ -211,6 +224,7 @@
       verdictFiredDetail: '+{ms} ms, held {held}',
       verdictMissed: 'Not registered',
       verdictShort: '{mm} mm short',
+      verdictInterrupted: 'cut off (disconnected)',
 
       rawTitle: 'Raw HID reports (last 20)',
       rawShow: 'Show',
@@ -221,13 +235,16 @@
       thrLoaded: 'Loaded {n} keys from profile {p} ({time})',
       thrSkipped: ' · {n} not applicable',
       thrFellBack: ' · the active slot number cannot be read while Synapse runs, so RAM (same values) was used',
+      thrFailedKeys: ' · {n} could not be read (saved set kept)',
+      thrInterrupted: 'the keyboard disconnected; loading stopped (previous points kept)',
+      thrStale: 'written to another profile — load the monitor points again',
       thrFailed: 'Loading failed: {err} — quit Synapse for a moment and try again',
       errAllZero: 'every key in this profile has actuation 0 (decided on the PC); try the other target profile',
       errNoneRead: 'could not read any of {n} keys (last error: {err})',
 
       actTitle: 'Read / set a key’s actuation point',
       actIntroHtml: 'Keys Synapse leaves out (such as the Windows key) can be read and written directly with the firmware commands <code>02:92</code> / <code>02:12</code>.',
-      actWarnHtml: '<b>Quit Synapse completely first</b> (tray icon → Quit). While Synapse runs the keyboard is in driver mode and Synapse decides presses on the PC, so values written to the keyboard are not used. When Synapse starts or quits and switches modes, <b>profile 0 (RAM)</b> is overwritten from the active profile.',
+      actWarnHtml: '<b>Quit Synapse completely first</b> (tray icon → Quit). While Synapse runs it talks to the keyboard over the same channel, and when it switches modes or re-applies its settings it can overwrite <b>profile 0 (RAM)</b>. The active profile number cannot be read while it runs either. (On the V3 Pro 8KHz, a Windows-key value saved to the slot with Synapse closed was still honoured after Synapse started.)',
       actKey: 'Key',
       actTarget: 'Target',
       actOptRam: 'Profile 0 — RAM (reverts on replug)',
@@ -238,7 +255,8 @@
       actSuggest: 'Suggest',
       actSuggestTitle: '0.2 mm shallower than the actuation point',
       actApply: 'Apply',
-      actHelpHtml: 'Actuation point: the larger the value, the deeper a key must go to register (V3 line 0.1–4.0 mm, V2 line 1.5–3.6 mm).<br>Release point: the key counts as released once it rises above this depth. It must be at least 0.1 mm shallower than the actuation point; 0.1–0.2 mm is typical. Too small a gap can make the input chatter at the edge. Leave it empty to keep the current value.',
+      actHelpHtml: 'Actuation point: the larger the value, the deeper a key must go to register.<br>Release point: the key counts as released once it rises above this depth. It must be at least 0.1 mm shallower than the actuation point; 0.1–0.2 mm is typical. Too small a gap can make the input chatter at the edge. Leave it empty to keep the current value; a field left as read keeps exactly the value read.',
+      rangeNote: 'Actuation points this keyboard accepts: {lo}–{hi} mm',
       dtKey: 'Key',
       dtProfile: 'Profile',
       profRam: '0 (RAM)',
@@ -252,10 +270,16 @@
       writeMismatch: 'Applied, but the read-back value differs',
       writeDetail: '{key}, profile {p}: actuation {a} → {b} mm, release {c} → {d} mm',
       writeFail: 'Apply failed: {err}',
+      writeUnconfirmed: 'Could not confirm the write — the value may already have changed. Press "Read current value" to check, and Undo if needed ({err})',
+      writeSame: '{key}: already set to these values, nothing written',
+      confirmNoUndo: 'The current values ({a} / {b} mm) are outside this tool’s safety range, so Undo will not be able to write them back after this change (re-applying your profile in Synapse restores them).\n\nContinue?',
+      undoUnconfirmed: 'Could not confirm the undo — press "Read current value" to check ({err})',
+      errUndoOtherDevice: 'The Undo record belongs to a different keyboard; nothing written',
+      errUnknownModel: 'Writes are blocked for a keyboard model this tool does not know (reading and the monitor still work)',
       confirmFlash: 'This writes to the flash of profile slot {p}. Continue?',
       confirmSynapse: 'Razer Synapse appears to be running (driver mode).\n\nA value written now may be reverted when Synapse re-applies its profile, or may not take effect. Save to flash only after quitting Synapse.\n\nContinue anyway?',
       safetyTitle: 'Before writing',
-      safetyHtml: '<ul style="margin: 0; padding-left: 18px"><li>This is an unofficial tool, not affiliated with Razer; you use it at your own risk (MIT License, no warranty).</li><li>It only sends four commands: read/write a key’s points and two status reads. Firmware, mode-switch and sensor-calibration commands are blocked in code.</li><li>Try <b>profile 0 (RAM)</b> first; replugging the keyboard reverts it.</li><li>If something goes wrong: replug the keyboard → <b>Undo</b> → re-apply your profile in Synapse.</li></ul>',
+      safetyHtml: '<ul style="margin: 0; padding-left: 18px"><li>This is an unofficial tool, not affiliated with Razer; you use it at your own risk (MIT License, no warranty).</li><li>It only sends four commands: read/write a key’s points and two status reads. Firmware, mode-switch and sensor-calibration commands are blocked in code, and writes are only allowed for known models within their range.</li><li>Try <b>profile 0 (RAM)</b> first; replugging the keyboard reverts it.</li><li>If something goes wrong: RAM values revert when you replug. For flash values press <b>Undo</b> while connected (if disconnected, press <b>Connect keyboard</b> first). Undo covers the last write and survives a reload. If that is not enough, re-apply your profile in Synapse.</li></ul>',
       safetyAgree: 'I understand the above and accept responsibility for the results',
       safetyLink: 'Safety policy',
       errConsent: 'Please accept the safety notice before writing',
@@ -286,7 +310,7 @@
   function detect() {
     try {
       const saved = localStorage.getItem(STORE_KEY);
-      if (saved && STRINGS[saved]) return saved;
+      if (saved === 'ko' || saved === 'en') return saved; // shared origin: accept only known values
     } catch (err) { /* storage unavailable */ }
     const first = (navigator.languages && navigator.languages[0]) || navigator.language || 'en';
     return first.toLowerCase().startsWith('ko') ? 'ko' : 'en';
@@ -297,12 +321,13 @@
     strings: STRINGS,
 
     t(key, vars) {
-      const s = STRINGS[this.lang][key] ?? STRINGS.en[key] ?? key;
+      const table = this.lang === 'ko' ? STRINGS.ko : STRINGS.en;
+      const s = (Object.prototype.hasOwnProperty.call(table, key) ? table[key] : STRINGS.en[key]) ?? key;
       return vars ? s.replace(/\{(\w+)\}/g, (m, k) => (k in vars ? vars[k] : m)) : s;
     },
 
     set(lang) {
-      this.lang = STRINGS[lang] ? lang : 'en';
+      this.lang = lang === 'ko' ? 'ko' : 'en';
       try { localStorage.setItem(STORE_KEY, this.lang); } catch (err) { /* not remembered */ }
     },
 

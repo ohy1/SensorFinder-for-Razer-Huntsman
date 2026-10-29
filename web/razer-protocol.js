@@ -32,8 +32,10 @@
       thresholdToRaw: (t) => t, // depth and thresholds share one byte scale
       mmToRaw: (mm) => ((mm - 1.5) / 2.1) * 255,
       gridMm: [1.5, 2, 2.5, 3, 3.5],
-      thresholdRangeMm: [1.5, 3.6],
+      // Writable actuation thresholds: the firmware clamps thrL to 15..250 (≈1.62–3.56 mm).
+      thrRange: [15, 250],
       minReleaseGap: 10, // firmware clamps thrH to thrL - 10
+      minRelease: 5, //    ... and to at least 5
     },
     v3: {
       depthReportId: 0x0b,
@@ -45,8 +47,9 @@
       thresholdToRaw: (t) => t * 256, // threshold is the high byte of the u16 depth
       mmToRaw: (mm) => mm * 16380,
       gridMm: [0, 1, 2, 3, 4],
-      thresholdRangeMm: [0.1, 4.0],
+      thrRange: [6, 255], // 0.1–4.0 mm, Synapse's range
       minReleaseGap: 6, // ~0.1 mm; Synapse's own defaults sit 6 apart (76/70)
+      minRelease: 0,
     },
   };
 
@@ -60,8 +63,22 @@
     0x02d0: { name: 'Huntsman V3 Pro TKL 8KHz', family: 'v3' },
     0x02d8: { name: 'Huntsman Signature Edition', family: 'v3' },
     0x02e5: { name: 'Huntsman V3 TKL 8KHz', family: 'v3' },
-    0x02e6: { name: 'Huntsman V3 Pro Low-profile TKL 8KHz', family: 'v3' },
+    // Low-profile switches travel 2.8 mm; Synapse stops there too.
+    0x02e6: { name: 'Huntsman V3 Pro Low-profile TKL 8KHz', family: 'v3', maxMm: 2.8 },
   };
+
+  /**
+   * Actuation thresholds this tool may write for a model: {lo, hi} in threshold units, or null
+   * for a model it does not know (writes are refused then; reading and monitoring still work).
+   */
+  function writeRange(productId) {
+    const m = MODELS[productId];
+    if (!m) return null;
+    const f = FAMILIES[m.family];
+    let [lo, hi] = f.thrRange;
+    if (m.maxMm) hi = Math.min(hi, f.mmToThreshold(m.maxMm));
+    return { lo, hi };
+  }
 
   // fwID = AT-101 positional key number used by Razer firmware.
   const KEY_NAMES = {
@@ -142,8 +159,8 @@
   function familyOf(productId, reportId) {
     const m = MODELS[productId];
     if (m) return m.family;
-    // Unknown PID: guess from the report ID the device actually sends.
-    if (reportId === FAMILIES.v2.depthReportId) return 'v2';
+    // Unknown PID: only the V3 depth report is distinctive. V3 boards also send a vendor
+    // report 07 on the same interface, so 07 says nothing about the family.
     if (reportId === FAMILIES.v3.depthReportId) return 'v3';
     return null;
   }
@@ -181,7 +198,8 @@
    *
    * With per-key thresholds (raw depth units, see setThresholds) it also estimates when the
    * key registered as an input: on when depth reaches the actuation point, off when it comes
-   * back to the release point. Rapid Trigger is not modelled.
+   * back to the release point. Rapid Trigger is not modelled. A touch is only judged
+   * "not registered" when the key's points were known for the whole touch.
    */
   class DepthTracker {
     constructor({ noiseFloor = 0, maxEvents = 1000, historyMs = 10000 } = {}) {
@@ -189,13 +207,18 @@
       this.maxEvents = maxEvents;
       this.historyMs = historyMs;
       this.thresholds = new Map(); // id -> {press, release}
+      this.lastT = 0;
       this.reset();
     }
 
     reset() {
+      // Keys held right now continue after the reset, but their start was not seen: they must
+      // not be judged as "not registered".
+      this.carried = new Set(this.live ? this.live.keys() : []);
       this.live = new Map(); // id -> raw
-      this.stats = new Map(); // id -> {peak, touches, activations, totalMs, firstSeen, lastSeen}
-      this.open = new Map(); // id -> {id, start, peak, activations, firstOnMs, heldMs}
+      // id -> {peak, touches, activations, totalMs, firstSeen, lastSeen, judgedTouches, judgedPeak}
+      this.stats = new Map();
+      this.open = new Map(); // id -> {id, start, peak, activations, firstOnMs, heldMs, judged}
       this.active = new Map(); // id -> time the input turned on
       this.events = []; // finished touches, newest last
       this.history = new Map(); // id -> [[t, raw], ...] for the last historyMs
@@ -207,11 +230,16 @@
     /** `thresholds`: Map or iterable of [id, {press, release}] in raw depth units. */
     setThresholds(thresholds) {
       this.thresholds = new Map(thresholds);
+      // An input that is on for a key whose points are gone can never be released by _judge.
+      for (const id of [...this.active.keys()]) {
+        if (!this.thresholds.has(id)) this._endInput(id, this.lastT);
+      }
     }
 
     /** Feeds one parsed report; `t` is a timestamp in ms. Returns ids whose touch just ended. */
     update(keys, t) {
       this.reports++;
+      this.lastT = t;
       const current = new Map();
       for (const { id, raw } of keys) if (raw > this.noiseFloor) current.set(id, raw);
       const ids = new Set([...current.keys(), ...this.open.keys(), ...this.active.keys()]);
@@ -229,29 +257,50 @@
       return ended;
     }
 
+    /**
+     * The stream stopped (keyboard unplugged, Synapse quit): close every open touch and input
+     * at `t` and mark them interrupted, so they neither stay "on" nor absorb the gap.
+     */
+    interrupt(t) {
+      this.lastT = Math.max(this.lastT, t);
+      for (const id of [...this.active.keys()]) this._endInput(id, t);
+      for (const id of [...this.open.keys()]) {
+        this._record(id, 0, t);
+        this._close(id, t, true);
+      }
+      this.live.clear();
+    }
+
     _touch(id, raw, t) {
       this.live.set(id, raw);
       let s = this.stats.get(id);
       if (!s) {
-        s = { peak: 0, touches: 0, activations: 0, totalMs: 0, firstSeen: t, lastSeen: t };
+        s = { peak: 0, touches: 0, activations: 0, totalMs: 0, firstSeen: t, lastSeen: t, judgedTouches: 0, judgedPeak: 0 };
         this.stats.set(id, s);
       }
       s.peak = Math.max(s.peak, raw);
       s.lastSeen = t;
       let o = this.open.get(id);
       if (!o) {
-        o = { id, start: t, peak: 0, activations: 0, firstOnMs: null, heldMs: 0 };
+        // Judged only if the points were known from the start of the touch and its start was seen.
+        const judged = this.thresholds.has(id) && !this.carried.has(id);
+        o = { id, start: t, peak: 0, activations: 0, firstOnMs: null, heldMs: 0, judged };
         this.open.set(id, o);
         s.touches++;
+        if (judged) s.judgedTouches++;
         this.lastId = id;
       }
       o.peak = Math.max(o.peak, raw);
+      if (o.judged) s.judgedPeak = Math.max(s.judgedPeak, raw);
     }
 
     _judge(id, raw, t) {
       const thr = this.thresholds.get(id);
-      if (!thr) return;
       const since = this.active.get(id);
+      if (!thr) {
+        if (since !== undefined) this._endInput(id, t);
+        return;
+      }
       if (since === undefined && raw > 0 && raw >= thr.press) {
         this.active.set(id, t);
         this.stats.get(id).activations++;
@@ -260,12 +309,18 @@
         if (o.firstOnMs === null) o.firstOnMs = t - o.start;
         this._spans(id).push([t, null]);
       } else if (since !== undefined && raw <= thr.release) {
-        this.active.delete(id);
-        const o = this.open.get(id);
-        if (o) o.heldMs += t - since;
-        const spans = this._spans(id);
-        if (spans.length) spans[spans.length - 1][1] = t;
+        this._endInput(id, t);
       }
+    }
+
+    _endInput(id, t) {
+      const since = this.active.get(id);
+      if (since === undefined) return;
+      this.active.delete(id);
+      const o = this.open.get(id);
+      if (o) o.heldMs += Math.max(0, t - since);
+      const spans = this._spans(id);
+      if (spans.length && spans[spans.length - 1][1] === null) spans[spans.length - 1][1] = t;
     }
 
     _spans(id) {
@@ -284,17 +339,20 @@
       while (spans && spans.length && spans[0][1] !== null && spans[0][1] < t - this.historyMs) spans.shift();
     }
 
-    _close(id, t) {
+    _close(id, t, interrupted = false) {
       const o = this.open.get(id);
       this.open.delete(id);
       this.live.delete(id);
+      this.carried.delete(id);
       const thr = this.thresholds.get(id);
+      const judged = o.judged && !!thr;
       const ev = {
         id, start: o.start, end: t, durationMs: t - o.start, peak: o.peak,
-        // null = unknown, because this key's actuation point has not been read.
-        fired: thr ? o.activations > 0 : null,
+        // true when an input was seen; false only for a fully judged touch; otherwise unknown.
+        fired: o.activations > 0 ? true : judged && !interrupted ? false : null,
         activations: o.activations, firstOnMs: o.firstOnMs, heldMs: o.heldMs,
-        marginRaw: thr ? thr.press - o.peak : null,
+        marginRaw: judged ? thr.press - o.peak : null,
+        interrupted,
       };
       this.stats.get(id).totalMs += ev.durationMs;
       this.events.push(ev);
@@ -380,15 +438,16 @@
 
   /**
    * Returns a copy of `a` with a new actuation point and, if given, a new release point.
-   * Without one the release point keeps its value unless it would no longer sit at least
-   * `minGap` below the actuation point; an explicit one that is too close throws.
+   * Without one the release point keeps its value, moved up to `minRelease` or down to `minGap`
+   * below the actuation point if needed; an explicit one outside those bounds throws.
    */
-  function withActuation(a, thrL, thrH = null, minGap = 10) {
+  function withActuation(a, thrL, thrH = null, minGap = 10, minRelease = 0) {
     const out = { ...a, fnData: [...a.fnData], thrL };
     if (thrH === null) {
-      if (out.thrH > thrL - minGap) out.thrH = Math.max(0, thrL - minGap);
+      if (out.thrH < minRelease) out.thrH = minRelease;
+      if (out.thrH > thrL - minGap) out.thrH = Math.max(minRelease, thrL - minGap);
     } else {
-      if (thrH < 0 || thrH > thrL - minGap) throw new RangeError('release point must sit below the actuation point');
+      if (thrH < minRelease || thrH > thrL - minGap) throw new RangeError('release point must sit below the actuation point');
       out.thrH = thrH;
     }
     return out;
@@ -417,10 +476,12 @@
 
   /**
    * Throws SafetyError unless `packet` is an allowed command and, for a write, stays within
-   * what the actuation tab can produce: profile 0-6, normal layer, a known key, and a release
-   * point at least minReleaseGap below the actuation point (0/0 = host decides is allowed).
+   * what the actuation tab can produce: a known model (`range` from writeRange), profile 0-6,
+   * normal layer, a known key, an actuation point inside `range` and a release point at least
+   * minReleaseGap below it. 0/0 ("host decides", what Synapse stores on V2) is allowed so Undo
+   * can restore it.
    */
-  function checkPacket(packet, family) {
+  function checkPacket(packet, family, range = null) {
     const p = toBytes(packet);
     const cls = p[6], cmd = p[7];
     if (p.length !== PACKET_LEN || !ALLOWED_COMMANDS.some(([c, i]) => c === cls && i === cmd)) {
@@ -428,11 +489,16 @@
     }
     if (cls !== KEY_ASSIGNMENT.cls || cmd !== KEY_ASSIGNMENT.set) return;
     const a = parseKeyAssignment(p.subarray(8, 88));
-    const f = FAMILIES[family] || FAMILIES.v3;
+    const f = FAMILIES[family];
+    if (!f || !range) throw new SafetyError('writes need a known keyboard model');
     if (!a || a.profile > 6) throw new SafetyError('profile out of range');
     if (a.layer !== 0) throw new SafetyError('only the normal layer may be written');
     if (!KEY_NAMES[a.key]) throw new SafetyError(`unknown key ${a.key}`);
-    if (!(a.thrL === 0 && a.thrH === 0) && a.thrH > a.thrL - f.minReleaseGap) {
+    if (a.thrL === 0 && a.thrH === 0) return;
+    if (a.thrL < range.lo || a.thrL > range.hi) {
+      throw new SafetyError(`actuation ${a.thrL} outside ${range.lo}..${range.hi} for this model`);
+    }
+    if (a.thrH < f.minRelease || a.thrH > a.thrL - f.minReleaseGap) {
       throw new SafetyError('release point too close to the actuation point');
     }
   }
@@ -446,6 +512,6 @@
     keyName, shortKeyName, layoutKeys, familyOf, parseDepthReport, DepthTracker,
     PACKET_LEN, TRANSACTION_ID, KEY_ASSIGNMENT, ACTIVE_PROFILE, buildPacket, crc, parseReply,
     getKeyAssignmentPacket, parseKeyAssignment, setKeyAssignmentPacket, withActuation, hex,
-    DEVICE_MODE, getDeviceModePacket, ALLOWED_COMMANDS, SafetyError, checkPacket,
+    DEVICE_MODE, getDeviceModePacket, ALLOWED_COMMANDS, SafetyError, checkPacket, writeRange,
   };
 });
