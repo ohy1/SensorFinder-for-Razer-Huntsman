@@ -50,6 +50,10 @@ class ControlTests(unittest.TestCase):
         b = a.with_actuation(rs.V3.mm_to_threshold(3.0))
         self.assertEqual((b.thr_l, b.thr_h, b.fn_data), (192, 150, b"\x08\x00"))
         self.assertEqual(a.with_actuation(100).thr_h, 90)
+        c = a.with_actuation(rs.V3.mm_to_threshold(2.7), rs.V3.mm_to_threshold(2.5), rs.V3.min_release_gap)
+        self.assertEqual((c.thr_l, c.thr_h), (173, 160))
+        with self.assertRaises(ValueError):
+            a.with_actuation(173, 170, rs.V3.min_release_gap)
 
     def test_scales_match_js(self):
         self.assertEqual(rs.V3.mm_to_threshold(1.2), 77)

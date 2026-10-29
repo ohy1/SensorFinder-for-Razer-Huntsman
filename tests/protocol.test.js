@@ -92,6 +92,11 @@ test('set packet keeps the key function and moves only the thresholds', () => {
   assert.deepEqual([...p.slice(6, 17)], [0x02, 0x12, 0, 127, 0, 192, 0, 2, 2, 0x08, 0x00]);
   // A release point above the new actuation point is pulled below it.
   assert.equal(P.withActuation({ ...a, thrH: 150 }, 100).thrH, 90);
+  // An explicit release point is kept as given, or rejected when too close.
+  const v3 = P.FAMILIES.v3;
+  const c = P.withActuation(a, v3.mmToThreshold(2.7), v3.mmToThreshold(2.5), v3.minReleaseGap);
+  assert.deepEqual([c.thrL, c.thrH], [173, 160]);
+  assert.throws(() => P.withActuation(a, 173, 170, v3.minReleaseGap), RangeError);
 });
 
 test('v3 thresholds are the high byte of the u16 scale', () => {

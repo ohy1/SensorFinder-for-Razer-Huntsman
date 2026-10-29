@@ -30,6 +30,7 @@
       thresholdToMm: (t) => 1.5 + (t / 255) * 2.1,
       mmToThreshold: (mm) => clamp(Math.round(((mm - 1.5) / 2.1) * 255), 0, 255),
       thresholdRangeMm: [1.5, 3.6],
+      minReleaseGap: 10, // firmware clamps thrH to thrL - 10
     },
     v3: {
       depthReportId: 0x0b,
@@ -39,6 +40,7 @@
       thresholdToMm: (t) => (t * 256) / 16380,
       mmToThreshold: (mm) => clamp(Math.round((mm * 16380) / 256), 1, 255),
       thresholdRangeMm: [0.1, 4.0],
+      minReleaseGap: 6, // ~0.1 mm; Synapse's own defaults sit 6 apart (76/70)
     },
   };
 
@@ -307,13 +309,18 @@
   }
 
   /**
-   * Returns a copy of `a` with a new actuation point. The release point keeps its value
-   * unless it would no longer sit below the actuation point (V2 firmware wants >= 10 units).
+   * Returns a copy of `a` with a new actuation point and, if given, a new release point.
+   * Without one the release point keeps its value unless it would no longer sit at least
+   * `minGap` below the actuation point; an explicit one that is too close throws.
    */
-  function withActuation(a, thrL) {
+  function withActuation(a, thrL, thrH = null, minGap = 10) {
     const out = { ...a, fnData: [...a.fnData], thrL };
-    const gap = 10;
-    if (out.thrH > thrL - gap) out.thrH = Math.max(0, thrL - gap);
+    if (thrH === null) {
+      if (out.thrH > thrL - minGap) out.thrH = Math.max(0, thrL - minGap);
+    } else {
+      if (thrH < 0 || thrH > thrL - minGap) throw new RangeError('release point must sit below the actuation point');
+      out.thrH = thrH;
+    }
     return out;
   }
 

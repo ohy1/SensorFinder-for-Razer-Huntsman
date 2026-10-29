@@ -44,7 +44,9 @@ V3 펌웨어의 센서 매트릭스에는 윈도우 키(fwID `127`)가 다른 �
 1. **Synapse를 완전히 종료합니다** (트레이 아이콘 → 종료).
    Synapse가 실행 중이면 키보드는 드라이버 모드이고, 입력 판정을 Synapse가 PC에서 직접 하므로 키보드에 적은 값이 쓰이지 않습니다.
 2. `web/index.html` → **키 입력 지점 (윈도우 키)** 탭에서 키(기본값 Win)를 고르고 **현재 값 읽기**를 누릅니다.
-3. 새 입력 지점(mm)을 넣고 **적용**합니다. 도구는 현재 값을 다시 읽고, 입력 지점만 바꿔 쓴 다음, 한 번 더 읽어서 값이 들어갔는지 확인합니다. 키 기능(fnId)은 그대로 둡니다.
+3. 새 입력 지점(mm)과 해제 지점(mm)을 넣고 **적용**합니다.
+   - 해제 지점은 입력 지점보다 0.1 mm 이상 얕아야 합니다. **추천값** 버튼을 누르면 입력 지점보다 0.2 mm 얕은 값이 들어갑니다.
+   - 도구는 현재 값을 다시 읽고, 두 지점만 바꿔 쓴 다음, 한 번 더 읽어서 값이 들어갔는지 확인합니다. 키 기능(fnId)은 그대로 둡니다.
    - **프로필 0 (RAM)**: 바로 적용되지만 키보드를 다시 꽂거나 Synapse가 모드를 바꾸면 원래대로 돌아갑니다. 먼저 이걸로 시험해 보세요.
    - **활성 프로필 슬롯 (플래시)**: 키보드에 저장되어 Synapse 없이 써도 유지됩니다. 단, 나중에 Synapse를 실행했다가 종료하면 Synapse가 자기 설정을 슬롯에 다시 쓰면서 이 값을 덮어쓸 수 있습니다.
 
@@ -77,7 +79,7 @@ python python/razer_sensorfinder.py set-key --key Win --mm 3.0
 ```
 
 ```bash
-python python/razer_sensorfinder.py set-key --key Win --mm 3.0 --profile active
+python python/razer_sensorfinder.py set-key --key Win --mm 2.7 --release-mm 2.5 --profile active
 ```
 
 - `monitor`: 깊이 스트림을 보여 줍니다(Synapse 실행 필요). Ctrl+C로 끝내면 감지 횟수 순으로 요약해 줍니다.

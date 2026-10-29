@@ -166,9 +166,14 @@
       <dl id="actInfo" class="kv hidden" style="margin-top: 12px"></dl>
       <div class="row" style="margin-top: 12px">
         <label>새 입력 지점 <input id="actMm" type="number" step="0.1" min="0.1" max="4.0" value="2.0"> mm</label>
+        <label>해제 지점 <input id="actRelMm" type="number" step="0.1" min="0" max="4.0" value=""> mm</label>
+        <button id="actRelSuggest" title="입력 지점보다 0.2 mm 얕게">추천값</button>
         <button id="actWrite" class="primary" disabled>적용</button>
       </div>
-      <p class="muted" style="margin-top: 6px">값이 클수록 더 깊이 눌러야 입력됩니다. V3 계열 0.1–4.0 mm, V2 계열 1.5–3.6 mm.</p>
+      <p class="muted" style="margin-top: 6px">
+        입력 지점: 값이 클수록 더 깊이 눌러야 입력됩니다 (V3 계열 0.1–4.0 mm, V2 계열 1.5–3.6 mm).<br>
+        해제 지점: 키가 이 깊이보다 위로 올라와야 떼어진 것으로 처리됩니다. 입력 지점보다 0.1 mm 이상 얕아야 하고, 0.1–0.2 mm 차이가 일반적입니다. 차이가 너무 작으면 경계에서 입력이 떨릴 수 있습니다. 비워 두면 기존 값을 유지합니다.
+      </p>
       <pre id="actLog" style="margin-top: 10px"></pre>
     </div>
   </section>
@@ -406,7 +411,9 @@ async function onRead() {
     const profile = await resolveProfile();
     currentAssignment = await readKey(profile, key);
     showAssignment(currentAssignment);
-    $('actMm').value = P.FAMILIES[state.family || 'v3'].thresholdToMm(currentAssignment.thrL).toFixed(1);
+    const f = P.FAMILIES[state.family || 'v3'];
+    $('actMm').value = f.thresholdToMm(currentAssignment.thrL).toFixed(1);
+    $('actRelMm').value = f.thresholdToMm(currentAssignment.thrH).toFixed(1);
     $('actWrite').disabled = false;
     actLog(`읽기 성공: ${P.keyName(key)} 프로필 ${profile}`);
   } catch (err) {
@@ -422,16 +429,27 @@ async function onWrite() {
     const mm = Number($('actMm').value);
     const [lo, hi] = f.thresholdRangeMm;
     if (!(mm >= lo && mm <= hi)) throw new Error(`${lo}–${hi} mm 범위로 입력하세요`);
+    const thrL = f.mmToThreshold(mm);
+    let thrH = null;
+    if ($('actRelMm').value.trim() !== '') {
+      const rel = Number($('actRelMm').value);
+      thrH = rel <= 0 ? 0 : f.mmToThreshold(rel);
+      if (!(rel >= 0) || thrH > thrL - f.minReleaseGap) {
+        throw new Error(`해제 지점은 입력 지점(${mm} mm)보다 0.1 mm 이상 얕아야 합니다`);
+      }
+    }
     if (profile !== 0 && !confirm(`프로필 슬롯 ${profile}의 플래시에 저장합니다. 계속할까요?`)) return;
 
     const before = await readKey(profile, key); // always start from the device's current value
-    const wanted = P.withActuation(before, f.mmToThreshold(mm));
+    const wanted = P.withActuation(before, thrL, thrH, f.minReleaseGap);
     await exchange(P.setKeyAssignmentPacket(wanted));
     const after = await readKey(profile, key);
     currentAssignment = after;
     showAssignment(after);
-    const ok = after.thrL === wanted.thrL && after.fnId === before.fnId;
-    actLog(`${ok ? '적용 확인' : '적용했지만 읽어 온 값이 다름'}: ${P.keyName(key)} thrL ${before.thrL} → ${after.thrL} (≈${f.thresholdToMm(after.thrL).toFixed(2)} mm)`);
+    const ok = after.thrL === wanted.thrL && after.thrH === wanted.thrH && after.fnId === before.fnId;
+    const mmOf = (t) => f.thresholdToMm(t).toFixed(2);
+    actLog(`${ok ? '적용 확인' : '적용했지만 읽어 온 값이 다름'}: ${P.keyName(key)} 프로필 ${profile} `
+      + `입력 ${mmOf(before.thrL)} → ${mmOf(after.thrL)} mm, 해제 ${mmOf(before.thrH)} → ${mmOf(after.thrH)} mm`);
   } catch (err) {
     actLog('적용 실패: ' + (err.message || err));
   }
@@ -497,6 +515,10 @@ function init() {
   $('rawToggle').addEventListener('change', () => { $('raw').classList.toggle('hidden', !$('rawToggle').checked); state.dirty = true; });
   $('actRead').addEventListener('click', onRead);
   $('actWrite').addEventListener('click', onWrite);
+  $('actRelSuggest').addEventListener('click', () => {
+    const mm = Number($('actMm').value);
+    if (mm > 0) $('actRelMm').value = Math.max(0, mm - 0.2).toFixed(1);
+  });
   $('actProfile').addEventListener('change', () => { $('actWrite').disabled = true; });
 
   if (!('hid' in navigator)) {

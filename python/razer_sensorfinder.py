@@ -7,7 +7,7 @@ Requires `pip install hidapi`.
   python razer_sensorfinder.py list
   python razer_sensorfinder.py monitor [--csv log.csv] [--noise N]
   python razer_sensorfinder.py get-key [--key Win] [--profile 0|active]
-  python razer_sensorfinder.py set-key --mm 3.0 [--key Win] [--profile 0|active]
+  python razer_sensorfinder.py set-key --mm 3.0 [--release-mm 2.8] [--key Win] [--profile 0|active]
 
 The depth stream only flows in driver mode, i.e. while Razer Synapse is running.
 Actuation set with `set-key` only matters while Synapse is NOT running.
@@ -32,6 +32,7 @@ class Family:
     zero_mm: float  # threshold 0
     full_mm: float  # threshold 255
     range_mm: tuple[float, float]
+    min_release_gap: int  # release must sit at least this many threshold units below actuation
 
     def raw_to_mm(self, raw: int) -> float:
         if self.entry_size == 2:
@@ -49,8 +50,8 @@ class Family:
 
 # V2: report 07, [fwID, depth:u8], 0..255 = 1.5..3.6 mm.
 # V3: report 0B, [fwID, depth:u16 BE], 1638 = 0.1 mm; key-assignment threshold = high byte.
-V2 = Family(0x07, 2, 0xFF, 1.5, 3.6, (1.5, 3.6))
-V3 = Family(0x0B, 3, 0xFFFF, 0.0, 255 * 256 / 16380, (0.1, 4.0))
+V2 = Family(0x07, 2, 0xFF, 1.5, 3.6, (1.5, 3.6), 10)
+V3 = Family(0x0B, 3, 0xFFFF, 0.0, 255 * 256 / 16380, (0.1, 4.0), 6)
 
 MODELS = {
     0x0266: ("Huntsman V2 Analog", V2),
@@ -203,8 +204,11 @@ class KeyAssignment:
     def to_args(self) -> bytes:
         return bytes([self.profile, self.key, self.layer, self.thr_l, self.thr_h, self.fn_id, len(self.fn_data)]) + self.fn_data
 
-    def with_actuation(self, thr_l: int) -> "KeyAssignment":
-        thr_h = self.thr_h if self.thr_h <= thr_l - 10 else max(0, thr_l - 10)
+    def with_actuation(self, thr_l: int, thr_h: int | None = None, min_gap: int = 10) -> "KeyAssignment":
+        if thr_h is None:
+            thr_h = self.thr_h if self.thr_h <= thr_l - min_gap else max(0, thr_l - min_gap)
+        elif not 0 <= thr_h <= thr_l - min_gap:
+            raise ValueError("release point must sit below the actuation point")
         return KeyAssignment(self.profile, self.key, self.layer, thr_l, thr_h, self.fn_id, self.fn_data)
 
 
@@ -371,16 +375,22 @@ def cmd_set_key(args):
     if not lo <= args.mm <= hi:
         raise SystemExit(f"--mm must be within {lo}..{hi} for the {name}")
     key = key_id(args.key)
+    thr_l = family.mm_to_threshold(args.mm)
+    thr_h = None
+    if args.release_mm is not None:
+        thr_h = 0 if args.release_mm <= 0 else family.mm_to_threshold(args.release_mm)
+        if thr_h > thr_l - family.min_release_gap:
+            raise SystemExit("--release-mm must be at least 0.1 mm shallower than --mm")
     if profile != 0 and not args.yes:
         if input(f"write to flash slot {profile}? [y/N] ").strip().lower() != "y":
             return
     before = ctl.read_key(profile, key)
-    wanted = before.with_actuation(family.mm_to_threshold(args.mm))
+    wanted = before.with_actuation(thr_l, thr_h, family.min_release_gap)
     ctl.write_key(wanted)
     after = ctl.read_key(profile, key)
     print("before:", _describe(family, before))
     print("after: ", _describe(family, after))
-    if after.thr_l != wanted.thr_l:
+    if (after.thr_l, after.thr_h) != (wanted.thr_l, wanted.thr_h):
         print("warning: the keyboard did not keep the new value")
 
 
@@ -398,6 +408,7 @@ def main(argv=None):
         p.add_argument("--profile", choices=["0", "active"], default="0", help="0 = RAM (default), active = flash slot")
         if name == "set-key":
             p.add_argument("--mm", type=float, required=True, help="new actuation point in mm")
+            p.add_argument("--release-mm", type=float, help="new release point in mm (default: keep, or pull below --mm)")
             p.add_argument("--yes", action="store_true", help="do not ask before writing flash")
         p.set_defaults(func=func)
     args = ap.parse_args(argv)
