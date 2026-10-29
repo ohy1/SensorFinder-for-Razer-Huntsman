@@ -747,7 +747,9 @@ async function readKey(profile, key) {
     r = await exchange(P.getKeyAssignmentPacket(profile, key, 0));
     const a = P.parseKeyAssignment(r.args);
     // Another program may have read a different key in between: ask again.
-    if (a && a.key === key && a.profile === profile) return a;
+    // Layer too: Synapse may read the same key's Hypershift layer, and writing that reply back
+    // would put these thresholds on the wrong layer.
+    if (a && a.key === key && a.profile === profile && a.layer === 0) return a;
     await sleep(20);
   }
   throw new Error(tr('errKeyReply', { hex: P.hex(r.args.slice(0, 12)) }));

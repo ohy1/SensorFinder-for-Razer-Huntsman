@@ -254,19 +254,22 @@ class Control:
 
     def exchange(self, packet: bytes) -> bytes:
         cls, cmd = packet[6], packet[7]
-        self.dev.send_feature_report(b"\x00" + packet)
-        for i in range(20):
-            time.sleep(0.005 if i == 0 else 0.02)
-            reply = parse_reply(bytes(self.dev.get_feature_report(0, PACKET_LEN + 1)), cls, cmd)
-            if reply is None:
-                raise SystemExit("unexpected reply format")
-            status, args = reply
-            if status == 1:
-                continue
-            if status != 2:
-                raise SystemExit(f"keyboard answered: {STATUS.get(status, hex(status))}")
-            return args
-        raise SystemExit("keyboard stayed busy")
+        # Synapse shares the channel while it runs: a reply to its request means send ours again.
+        for attempt in range(5):
+            self.dev.send_feature_report(b"\x00" + packet)
+            for i in range(20):
+                time.sleep(0.005 if i == 0 else 0.02)
+                reply = parse_reply(bytes(self.dev.get_feature_report(0, PACKET_LEN + 1)), cls, cmd)
+                if reply is None:
+                    break
+                status, args = reply
+                if status == 1:
+                    continue
+                if status != 2:
+                    raise SystemExit(f"keyboard answered: {STATUS.get(status, hex(status))}")
+                return args
+            time.sleep(0.02 + attempt * 0.03)
+        raise SystemExit("no matching reply (another program may be using the keyboard, e.g. Synapse)")
 
     def active_profile(self) -> int:
         slot = self.exchange(build_packet(0x05, 0x84, 1))[0]
@@ -275,10 +278,13 @@ class Control:
         return slot
 
     def read_key(self, profile: int, key: int) -> KeyAssignment:
-        a = KeyAssignment.parse(self.exchange(build_packet(0x02, 0x92, 80, [profile, key, 0])))
-        if a.key != key:
-            raise SystemExit("reply is for a different key")
-        return a
+        # Another program (Synapse) may be using the channel: only accept the reply we asked for.
+        for _ in range(3):
+            a = KeyAssignment.parse(self.exchange(build_packet(0x02, 0x92, 80, [profile, key, 0])))
+            if (a.profile, a.key, a.layer) == (profile, key, 0):
+                return a
+            time.sleep(0.02)
+        raise SystemExit("reply is for a different key, profile or layer")
 
     def write_key(self, a: KeyAssignment) -> None:
         self.exchange(build_packet(0x02, 0x12, 80, a.to_args()))
