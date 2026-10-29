@@ -1,0 +1,520 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Razer SensorFinder</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1b1f24; --muted: #5f6b7a; --border: #d8dde3;
+    --key: #eef1f4; --key-text: #2a3038; --accent: #13a10e; --accent-soft: rgba(19, 161, 14, 0.18);
+    --warn: #c26a00; --warn-soft: rgba(194, 106, 0, 0.14); --danger: #c62828; --mono: ui-monospace, SFMono-Regular, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #111418; --panel: #1a1e24; --text: #e6e9ed; --muted: #97a3b2; --border: #2c333c;
+      --key: #242a32; --key-text: #d5dbe2; --accent: #44d62c; --accent-soft: rgba(68, 214, 44, 0.2);
+      --warn: #ffa733; --warn-soft: rgba(255, 167, 51, 0.16); --danger: #ff6b6b;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #111418; --panel: #1a1e24; --text: #e6e9ed; --muted: #97a3b2; --border: #2c333c;
+    --key: #242a32; --key-text: #d5dbe2; --accent: #44d62c; --accent-soft: rgba(68, 214, 44, 0.2);
+    --warn: #ffa733; --warn-soft: rgba(255, 167, 51, 0.16); --danger: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif; }
+  main { max-width: 1200px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 0 0 10px; }
+  p { margin: 0 0 8px; }
+  .muted { color: var(--muted); }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin-top: 14px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  button, select, input { font: inherit; color: inherit; }
+  button { background: var(--panel); border: 1px solid var(--border); border-radius: 7px; padding: 6px 12px; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  select, input[type="number"] { background: var(--panel); border: 1px solid var(--border); border-radius: 7px; padding: 5px 8px; }
+  input[type="number"] { width: 90px; }
+  .tabs { display: flex; gap: 4px; margin-top: 14px; border-bottom: 1px solid var(--border); }
+  .tabs button { border: none; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 8px 12px; color: var(--muted); }
+  .tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+  .status { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; background: var(--key); font-size: 13px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot.on { background: var(--accent); }
+  .note { padding: 10px 12px; border-radius: 8px; background: var(--warn-soft); border-left: 3px solid var(--warn); margin-top: 10px; }
+  .error { color: var(--danger); }
+
+  .kb-wrap { overflow-x: auto; }
+  .kb { position: relative; width: 100%; min-width: 640px; aspect-ratio: 22.5 / 6.25; }
+  .key { position: absolute; padding: 2px; }
+  .key > div { position: relative; height: 100%; border-radius: 5px; background: var(--key); border: 1px solid var(--border); overflow: hidden; color: var(--key-text); font-size: 11px; display: flex; align-items: flex-start; justify-content: flex-start; padding: 2px 4px; }
+  .key .fill { position: absolute; left: 0; right: 0; bottom: 0; background: var(--accent); opacity: 0.85; height: 0; }
+  .key .lbl { position: relative; z-index: 1; white-space: nowrap; }
+  .key .cnt { position: absolute; right: 3px; bottom: 1px; z-index: 1; font-size: 10px; font-family: var(--mono); color: var(--warn); font-weight: 700; }
+  .key.touched > div { border-color: var(--warn); box-shadow: inset 0 0 0 1px var(--warn); background: var(--warn-soft); }
+  .key.live > div { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+  .key.selected > div { outline: 2px dashed var(--text); outline-offset: -3px; }
+
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 800px) { .grid2 { grid-template-columns: 1fr; } }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; }
+  td.num, th.num { text-align: right; font-family: var(--mono); }
+  .scroll { max-height: 360px; overflow: auto; }
+  pre { font-family: var(--mono); font-size: 12px; margin: 0; white-space: pre-wrap; word-break: break-all; }
+  .hidden { display: none !important; }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: 13px; }
+  .kv dt { color: var(--muted); }
+  .kv dd { margin: 0; font-family: var(--mono); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Razer SensorFinder</h1>
+  <p class="muted">Razer Huntsman 아날로그(광학) 키보드에서 실제로 눌림이 감지되는 키와 깊이를 실시간으로 보여주고, 키별 입력 지점(윈도우 키 포함)을 직접 설정합니다.</p>
+
+  <div id="unsupported" class="note hidden">이 브라우저는 WebHID를 지원하지 않습니다. 데스크톱 <b>Chrome</b> 또는 <b>Edge</b>로 여세요.</div>
+
+  <div class="panel">
+    <div class="row">
+      <button id="connect" class="primary">키보드 연결</button>
+      <span class="status"><span id="dot" class="dot"></span><span id="devname">연결 안 됨</span></span>
+      <span class="status">리포트 <span id="reports" style="font-family: var(--mono)">0</span></span>
+      <span id="modehint" class="status hidden"></span>
+    </div>
+    <p id="connectError" class="error hidden" style="margin-top: 8px"></p>
+  </div>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-tab="monitor">센서 모니터</button>
+    <button role="tab" aria-selected="false" data-tab="actuation">키 입력 지점 (윈도우 키)</button>
+  </div>
+
+  <!-- ===== Monitor ===== -->
+  <section id="tab-monitor">
+    <div class="panel">
+      <div class="row" style="justify-content: space-between">
+        <h2 style="margin: 0">키 깊이 맵</h2>
+        <div class="row">
+          <label>노이즈 무시: 원시값 ≤ <input id="noise" type="number" min="0" value="0"></label>
+          <button id="reset">기록 초기화</button>
+          <button id="csv">CSV 내보내기</button>
+        </div>
+      </div>
+      <p class="muted" style="margin-top: 8px">초록 = 지금 눌린 깊이, 주황 테두리 = 기록 중 한 번이라도 감지된 키 (숫자 = 감지 횟수). 키에서 손을 떼고 지켜보거나, 키캡을 하나씩 살짝 건드려 보세요.</p>
+      <div class="kb-wrap"><div id="kb" class="kb"></div></div>
+      <div id="extraKeys" class="row hidden" style="margin-top: 8px"></div>
+      <div id="noStream" class="note hidden">
+        연결은 됐지만 깊이 데이터가 들어오지 않습니다. 깊이 스트림은 키보드가 <b>드라이버 모드</b>일 때만 나옵니다.
+        <b>Razer Synapse를 실행</b>해 둔 상태(트레이 포함)에서 키를 눌러 보세요.
+      </div>
+    </div>
+
+    <div class="grid2">
+      <div class="panel">
+        <h2>감지된 키 순위</h2>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>키</th><th class="num">감지 횟수</th><th class="num">최대 깊이</th><th class="num">현재</th><th class="num">누적 시간</th></tr></thead>
+            <tbody id="ranking"><tr><td colspan="5" class="muted">아직 감지된 키가 없습니다.</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>감지 기록 (최신순)</h2>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>시각</th><th>키</th><th class="num">지속</th><th class="num">최대 깊이</th></tr></thead>
+            <tbody id="events"><tr><td colspan="4" class="muted">기록 없음</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="row" style="justify-content: space-between">
+        <h2 style="margin: 0">원시 HID 리포트 (최근 20개)</h2>
+        <label><input id="rawToggle" type="checkbox"> 표시</label>
+      </div>
+      <pre id="raw" class="hidden" style="margin-top: 8px"></pre>
+      <p class="muted" style="margin-top: 8px">목록에 없는 모델이거나 값이 이상하면 이 내용을 이슈로 남겨 주세요.</p>
+    </div>
+  </section>
+
+  <!-- ===== Actuation ===== -->
+  <section id="tab-actuation" class="hidden">
+    <div class="panel">
+      <h2>키별 입력 지점 읽기 / 설정</h2>
+      <p class="muted">Synapse가 조절 대상에서 빼놓은 키(윈도우 키 등)도 펌웨어 명령 <code>02:92</code> / <code>02:12</code>로 직접 읽고 쓸 수 있습니다.</p>
+      <div class="note">
+        <b>먼저 Synapse를 완전히 종료하세요</b> (트레이 아이콘 → 종료). Synapse가 실행 중이면 키보드는 드라이버 모드이고, 입력 판정을 Synapse가 PC에서 직접 하므로 키보드에 적은 값이 무시됩니다.
+        Synapse가 시작하거나 종료되며 모드를 바꾸면 <b>프로필 0(RAM)</b> 값은 활성 프로필 값으로 덮어써집니다.
+      </div>
+      <div class="row" style="margin-top: 12px">
+        <label>키 <select id="actKey"></select></label>
+        <label>대상
+          <select id="actProfile">
+            <option value="0">프로필 0 — RAM (재연결하면 원래대로)</option>
+            <option value="active">활성 프로필 슬롯 — 플래시에 저장</option>
+          </select>
+        </label>
+        <button id="actRead">현재 값 읽기</button>
+      </div>
+      <dl id="actInfo" class="kv hidden" style="margin-top: 12px"></dl>
+      <div class="row" style="margin-top: 12px">
+        <label>새 입력 지점 <input id="actMm" type="number" step="0.1" min="0.1" max="4.0" value="2.0"> mm</label>
+        <button id="actWrite" class="primary" disabled>적용</button>
+      </div>
+      <p class="muted" style="margin-top: 6px">값이 클수록 더 깊이 눌러야 입력됩니다. V3 계열 0.1–4.0 mm, V2 계열 1.5–3.6 mm.</p>
+      <pre id="actLog" style="margin-top: 10px"></pre>
+    </div>
+  </section>
+
+  <p class="muted" style="margin-top: 16px; font-size: 12px">비공식 도구입니다. 프로토콜은 공개된 리버스 엔지니어링 자료(easyrazer, AnalogSense, razer-analog-linux)를 바탕으로 합니다. 사용에 따른 책임은 사용자에게 있습니다.</p>
+</main>
+
+<script src="razer-protocol.js"></script>
+<script>
+'use strict';
+const P = RazerProtocol;
+const $ = (id) => document.getElementById(id);
+
+const state = {
+  devices: [],        // opened HIDDevice objects of the keyboard
+  control: null,      // HIDDevice that answers the 90-byte feature report
+  productId: null,
+  family: null,
+  tracker: new P.DepthTracker(),
+  rawLog: [],
+  dirty: true,
+  wallOffset: Date.now() - performance.now(),
+  streamSeen: false,
+};
+
+// ---------- keyboard map ----------
+const keyEls = new Map();
+const TOTAL_W = 22.5, TOTAL_H = 6.25;
+function buildKeyboard() {
+  const kb = $('kb');
+  for (const k of P.layoutKeys()) {
+    const el = document.createElement('div');
+    el.className = 'key';
+    el.style.left = (k.x / TOTAL_W * 100) + '%';
+    el.style.top = (k.y / TOTAL_H * 100) + '%';
+    el.style.width = (k.w / TOTAL_W * 100) + '%';
+    el.style.height = (k.h / TOTAL_H * 100) + '%';
+    el.title = `${P.keyName(k.id)} (fwID ${k.id})`;
+    el.innerHTML = `<div><span class="fill"></span><span class="lbl"></span><span class="cnt"></span></div>`;
+    el.querySelector('.lbl').textContent = P.shortKeyName(k.id);
+    el.addEventListener('click', () => selectActuationKey(k.id));
+    kb.appendChild(el);
+    keyEls.set(k.id, el);
+  }
+}
+
+function depthText(raw) {
+  if (!state.family) return String(raw);
+  const f = P.FAMILIES[state.family];
+  return `${raw} (≈${f.rawToMm(raw).toFixed(2)} mm)`;
+}
+
+function fmtMs(ms) {
+  return ms >= 1000 ? (ms / 1000).toFixed(1) + ' s' : Math.round(ms) + ' ms';
+}
+
+function hms(d) {
+  return [d.getHours(), d.getMinutes(), d.getSeconds()].map((n) => String(n).padStart(2, '0')).join(':');
+}
+
+function fmtClock(perfT) {
+  const d = new Date(state.wallOffset + perfT);
+  return hms(d) + '.' + String(d.getMilliseconds()).padStart(3, '0');
+}
+
+function render() {
+  if (!state.dirty) return requestAnimationFrame(render);
+  state.dirty = false;
+  const t = state.tracker;
+  const rawMax = state.family ? P.FAMILIES[state.family].rawMax : 255;
+  const extra = [];
+
+  for (const [id, el] of keyEls) {
+    const live = t.live.get(id) || 0;
+    const s = t.stats.get(id);
+    el.classList.toggle('live', live > 0);
+    el.classList.toggle('touched', !!s);
+    el.querySelector('.fill').style.height = Math.min(100, Math.max(live > 0 ? 6 : 0, live / rawMax * 100)) + '%';
+    el.querySelector('.cnt').textContent = s ? s.touches : '';
+  }
+  for (const [id, s] of t.stats) if (!keyEls.has(id)) extra.push({ id, s, live: t.live.get(id) || 0 });
+  $('extraKeys').classList.toggle('hidden', extra.length === 0);
+  $('extraKeys').innerHTML = extra.map((e) =>
+    `<span class="status">레이아웃 밖 키: ${esc(P.keyName(e.id))} · ${e.s.touches}회 · 현재 ${e.live}</span>`).join('');
+
+  const rank = t.ranking();
+  $('ranking').innerHTML = rank.length ? rank.map((r) => `<tr>
+      <td>${esc(P.keyName(r.id))} <span class="muted">#${r.id}</span></td>
+      <td class="num">${r.touches}</td><td class="num">${esc(depthText(r.peak))}</td>
+      <td class="num">${r.live || ''}</td><td class="num">${fmtMs(r.totalMs)}</td></tr>`).join('')
+    : '<tr><td colspan="5" class="muted">아직 감지된 키가 없습니다.</td></tr>';
+
+  const evs = t.events.slice(-200).reverse();
+  const open = [...t.open.values()].map((o) => ({ ...o, live: true }));
+  const rows = [...open, ...evs].sort((a, b) => b.start - a.start);
+  $('events').innerHTML = rows.length ? rows.map((e) => `<tr>
+      <td>${fmtClock(e.start)}</td><td>${esc(P.keyName(e.id))}</td>
+      <td class="num">${e.live ? '진행 중' : fmtMs(e.durationMs)}</td><td class="num">${esc(depthText(e.peak))}</td></tr>`).join('')
+    : '<tr><td colspan="4" class="muted">기록 없음</td></tr>';
+
+  $('reports').textContent = t.reports;
+  if (!$('raw').classList.contains('hidden')) $('raw').textContent = state.rawLog.join('\n');
+  requestAnimationFrame(render);
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+
+// ---------- HID ----------
+function onInputReport(e) {
+  const bytes = new Uint8Array(e.data.buffer, e.data.byteOffset, e.data.byteLength);
+  const family = state.family || P.familyOf(state.productId, e.reportId);
+  state.rawLog.push(`#${e.reportId.toString(16).padStart(2, '0')}  ${P.hex(bytes)}`);
+  if (state.rawLog.length > 20) state.rawLog.shift();
+  if (!family || e.reportId !== P.FAMILIES[family].depthReportId) { state.dirty = true; return; }
+  state.family = family;
+  if (!state.streamSeen) {
+    state.streamSeen = true;
+    $('noStream').classList.add('hidden');
+    showModeHint('드라이버 모드 (깊이 스트림 수신 중)');
+  }
+  state.tracker.update(P.parseDepthReport(family, bytes), e.timeStamp || performance.now());
+  state.dirty = true;
+}
+
+function showModeHint(text) {
+  $('modehint').textContent = text;
+  $('modehint').classList.remove('hidden');
+}
+
+function hasControlCollection(dev) {
+  return (dev.collections || []).some((c) => (c.featureReports || []).some((r) => r.reportId === 0));
+}
+
+async function attach(devices) {
+  const kb = devices.filter((d) => d.vendorId === P.VENDOR_RAZER);
+  if (!kb.length) return;
+  state.productId = kb[0].productId;
+  const model = P.MODELS[state.productId];
+  state.family = model ? model.family : null;
+  for (const d of kb) {
+    if (state.devices.includes(d)) continue;
+    try {
+      if (!d.opened) await d.open();
+      d.addEventListener('inputreport', onInputReport);
+      state.devices.push(d);
+    } catch (err) {
+      console.warn('open failed', d, err);
+    }
+  }
+  state.control = state.devices.find(hasControlCollection) || null;
+  const name = model ? `Razer ${model.name}` : `${kb[0].productName} (PID ${state.productId.toString(16).padStart(4, '0')}, 미확인 모델)`;
+  $('devname').textContent = name;
+  $('dot').classList.toggle('on', state.devices.length > 0);
+  $('connectError').classList.add('hidden');
+  fillActuationRange();
+  setTimeout(() => { if (!state.streamSeen && state.devices.length) $('noStream').classList.remove('hidden'); }, 3000);
+}
+
+async function connect() {
+  try {
+    const devs = await navigator.hid.requestDevice({ filters: [{ vendorId: P.VENDOR_RAZER }] });
+    await attach(devs);
+    if (!state.devices.length && devs.length) throw new Error('장치를 열 수 없습니다. 다른 프로그램이 독점하고 있는지 확인하세요.');
+  } catch (err) {
+    $('connectError').textContent = String(err.message || err);
+    $('connectError').classList.remove('hidden');
+  }
+}
+
+// ---------- control channel ----------
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function exchange(packet) {
+  const cls = packet[6], cmd = packet[7];
+  const candidates = state.control ? [state.control] : state.devices;
+  let lastErr = new Error('제어 인터페이스를 찾지 못했습니다');
+  for (const dev of candidates) {
+    try {
+      await dev.sendFeatureReport(0, packet);
+      for (let i = 0; i < 20; i++) {
+        await sleep(i === 0 ? 5 : 20);
+        const reply = P.parseReply(await dev.receiveFeatureReport(0), cls, cmd);
+        if (!reply) throw new Error('응답 형식이 다릅니다');
+        if (reply.status === 1) continue;
+        if (reply.status !== 2) throw new Error(`키보드 응답: ${reply.statusText}`);
+        state.control = dev;
+        return reply;
+      }
+      throw new Error('키보드가 계속 busy 상태입니다');
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr;
+}
+
+let currentAssignment = null;
+
+function actLog(line) {
+  $('actLog').textContent = `${hms(new Date())}  ${line}\n` + $('actLog').textContent;
+}
+
+async function resolveProfile() {
+  if ($('actProfile').value !== 'active') return 0;
+  const r = await exchange(P.buildPacket(P.ACTIVE_PROFILE.cls, P.ACTIVE_PROFILE.get, 1));
+  const slot = r.args[0];
+  if (slot < 1 || slot > 6) throw new Error(`활성 프로필 번호가 이상합니다: ${slot}`);
+  return slot;
+}
+
+async function readKey(profile, key) {
+  const r = await exchange(P.getKeyAssignmentPacket(profile, key, 0));
+  const a = P.parseKeyAssignment(r.args);
+  if (!a || a.key !== key) throw new Error('키 정보 응답이 이상합니다: ' + P.hex(r.args.slice(0, 12)));
+  return a;
+}
+
+function showAssignment(a) {
+  const f = P.FAMILIES[state.family || 'v3'];
+  $('actInfo').innerHTML = `
+    <dt>키</dt><dd>${esc(P.keyName(a.key))} (fwID ${a.key})</dd>
+    <dt>프로필</dt><dd>${a.profile === 0 ? '0 (RAM)' : a.profile + ' (플래시 슬롯)'}</dd>
+    <dt>입력 지점 thrL</dt><dd>${a.thrL} → ≈${f.thresholdToMm(a.thrL).toFixed(2)} mm</dd>
+    <dt>해제 지점 thrH</dt><dd>${a.thrH} → ≈${f.thresholdToMm(a.thrH).toFixed(2)} mm</dd>
+    <dt>기능</dt><dd>fnId ${a.fnId} [${P.hex(a.fnData)}]</dd>`;
+  $('actInfo').classList.remove('hidden');
+}
+
+async function onRead() {
+  try {
+    if (!state.devices.length) throw new Error('먼저 키보드를 연결하세요');
+    const key = Number($('actKey').value);
+    const profile = await resolveProfile();
+    currentAssignment = await readKey(profile, key);
+    showAssignment(currentAssignment);
+    $('actMm').value = P.FAMILIES[state.family || 'v3'].thresholdToMm(currentAssignment.thrL).toFixed(1);
+    $('actWrite').disabled = false;
+    actLog(`읽기 성공: ${P.keyName(key)} 프로필 ${profile}`);
+  } catch (err) {
+    actLog('읽기 실패: ' + (err.message || err));
+  }
+}
+
+async function onWrite() {
+  try {
+    const key = Number($('actKey').value);
+    const profile = await resolveProfile();
+    const f = P.FAMILIES[state.family || 'v3'];
+    const mm = Number($('actMm').value);
+    const [lo, hi] = f.thresholdRangeMm;
+    if (!(mm >= lo && mm <= hi)) throw new Error(`${lo}–${hi} mm 범위로 입력하세요`);
+    if (profile !== 0 && !confirm(`프로필 슬롯 ${profile}의 플래시에 저장합니다. 계속할까요?`)) return;
+
+    const before = await readKey(profile, key); // always start from the device's current value
+    const wanted = P.withActuation(before, f.mmToThreshold(mm));
+    await exchange(P.setKeyAssignmentPacket(wanted));
+    const after = await readKey(profile, key);
+    currentAssignment = after;
+    showAssignment(after);
+    const ok = after.thrL === wanted.thrL && after.fnId === before.fnId;
+    actLog(`${ok ? '적용 확인' : '적용했지만 읽어 온 값이 다름'}: ${P.keyName(key)} thrL ${before.thrL} → ${after.thrL} (≈${f.thresholdToMm(after.thrL).toFixed(2)} mm)`);
+  } catch (err) {
+    actLog('적용 실패: ' + (err.message || err));
+  }
+}
+
+function fillActuationRange() {
+  const f = P.FAMILIES[state.family || 'v3'];
+  $('actMm').min = f.thresholdRangeMm[0];
+  $('actMm').max = f.thresholdRangeMm[1];
+}
+
+function selectActuationKey(id) {
+  $('actKey').value = String(id);
+  for (const [k, el] of keyEls) el.classList.toggle('selected', k === id);
+  $('actWrite').disabled = true;
+}
+
+function buildKeySelect() {
+  const ids = Object.keys(P.KEY_NAMES).map(Number).sort((a, b) => a - b);
+  $('actKey').innerHTML = ids.map((id) => `<option value="${id}">${esc(P.keyName(id))} (fwID ${id})</option>`).join('');
+  $('actKey').value = String(P.WIN_KEY);
+  $('actKey').addEventListener('change', () => selectActuationKey(Number($('actKey').value)));
+}
+
+// ---------- CSV ----------
+function exportCsv() {
+  const t = state.tracker;
+  const lines = ['type,key,fwID,start_ms,duration_ms,peak_raw,peak_mm'];
+  const f = state.family ? P.FAMILIES[state.family] : null;
+  for (const e of t.events) {
+    lines.push(['touch', csvCell(P.keyName(e.id)), e.id, e.start.toFixed(1), e.durationMs.toFixed(1), e.peak,
+      f ? f.rawToMm(e.peak).toFixed(3) : ''].join(','));
+  }
+  for (const r of t.ranking()) {
+    lines.push(['summary', csvCell(P.keyName(r.id)), r.id, '', r.totalMs.toFixed(1), r.peak,
+      f ? f.rawToMm(r.peak).toFixed(3) : ''].join(','));
+  }
+  const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `razer-sensorfinder-${new Date().toISOString().replace(/[:.]/g, '-')}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function csvCell(s) {
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+// ---------- wiring ----------
+function init() {
+  buildKeyboard();
+  buildKeySelect();
+  selectActuationKey(P.WIN_KEY);
+  document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => {
+    document.querySelectorAll('.tabs button').forEach((x) => x.setAttribute('aria-selected', String(x === b)));
+    $('tab-monitor').classList.toggle('hidden', b.dataset.tab !== 'monitor');
+    $('tab-actuation').classList.toggle('hidden', b.dataset.tab !== 'actuation');
+  }));
+  $('reset').addEventListener('click', () => { state.tracker.reset(); state.dirty = true; });
+  $('noise').addEventListener('change', () => { state.tracker.noiseFloor = Math.max(0, Number($('noise').value) || 0); });
+  $('csv').addEventListener('click', exportCsv);
+  $('rawToggle').addEventListener('change', () => { $('raw').classList.toggle('hidden', !$('rawToggle').checked); state.dirty = true; });
+  $('actRead').addEventListener('click', onRead);
+  $('actWrite').addEventListener('click', onWrite);
+  $('actProfile').addEventListener('change', () => { $('actWrite').disabled = true; });
+
+  if (!('hid' in navigator)) {
+    $('unsupported').classList.remove('hidden');
+    $('connect').disabled = true;
+  } else {
+    $('connect').addEventListener('click', connect);
+    navigator.hid.getDevices().then(attach);
+    navigator.hid.addEventListener('disconnect', (e) => {
+      state.devices = state.devices.filter((d) => d !== e.device);
+      if (state.control === e.device) state.control = null;
+      $('dot').classList.toggle('on', state.devices.length > 0);
+      if (!state.devices.length) $('devname').textContent = '연결 끊김';
+    });
+  }
+  requestAnimationFrame(render);
+}
+init();
+</script>
+</body>
+</html>

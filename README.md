@@ -1,0 +1,126 @@
+# Razer SensorFinder
+
+Razer Huntsman 아날로그(광학) 키보드에서 **어느 키의 센서가 얼마나 눌린 것으로 감지되는지**를 실시간으로 보여 주는 진단 도구입니다.
+호환 키캡을 끼운 뒤 키보드가 미세한 입력을 잡을 때 원인 키를 찾는 용도로 만들었습니다.
+Synapse가 설정 대상에서 빼놓은 키(**윈도우 키** 등)의 입력 지점(액추에이션)을 직접 읽고 바꾸는 기능도 들어 있습니다.
+
+> 비공식 도구입니다. Razer와 관계없고, 리버스 엔지니어링으로 공개된 프로토콜을 사용합니다. 사용에 따른 책임은 사용자에게 있습니다.
+
+## 지원 모델
+
+| 모델 | PID | 깊이 스트림 | 입력 지점 읽기/쓰기 |
+|---|---|---|---|
+| Huntsman V2 Analog | `0266` | 리포트 `07`, 1바이트 | `02:92` / `02:12` |
+| Huntsman Mini Analog | `0282` | 리포트 `07`, 1바이트 | `02:92` / `02:12` |
+| Huntsman V3 Pro / **V3 Pro 8KHz** / V3 Pro TKL / TKL 8KHz / V3 Pro Mini / V3 TKL 8KHz / Signature Edition / V3 Pro Low-profile TKL 8KHz | `02A6` / **`02CF`** / `02A7` / `02D0` / `02B0` / `02E5` / `02D8` / `02E6` | 리포트 `0B`, u16 BE | `02:92` / `02:12` (임계값 = u16의 상위 바이트) |
+
+## 1. 센서 모니터: 어느 키가 걸리는지 찾기
+
+### 실행
+
+1. **Razer Synapse를 실행해 둡니다** (트레이에 있어도 됩니다). Synapse가 켜져 있으면 키보드가 "드라이버 모드"로 동작하며 키별 깊이 데이터를 PC로 보냅니다. 이 도구는 그 데이터를 함께 읽습니다.
+2. 데스크톱 **Chrome** 또는 **Edge**에서 `web/index.html`을 엽니다. 저장소를 내려받아 파일을 더블클릭해도 되고, GitHub Pages로 호스팅해도 됩니다.
+3. **키보드 연결**을 누르고 목록에서 키보드를 선택합니다.
+
+### 원인 키 찾는 순서
+
+1. 키보드에서 손을 떼고 30초쯤 둡니다. 이때 **주황 테두리가 생기는 키**는 아무도 누르지 않았는데 센서가 눌림을 감지한 키입니다. 키캡이 스템을 미리 누르고 있거나 하우징에 닿아 있을 가능성이 큽니다.
+2. 키캡 가장자리를 하나씩 살짝 건드려 봅니다. 눌러야 할 키 말고 옆 키까지 같이 감지되면 그 키캡이 간섭하는 것입니다.
+3. **감지된 키 순위** 표에서 *감지 횟수*와 *최대 깊이(mm)*를 확인합니다. Synapse에서 그 키만 입력 지점을 그 값보다 깊게 잡으면 전체 감도를 낮추지 않아도 됩니다.
+4. 필요하면 **CSV 내보내기**로 기록을 저장합니다.
+
+### 깊이 값 읽는 법
+
+- **V3 계열**: 원시값 0–65535이며 1638 = 0.1 mm입니다. 펌웨어는 0.1 mm보다 얕은 눌림을 보고하지 않으므로, 여기에 뜨는 키는 실제로 0.1 mm 이상 눌린 상태입니다.
+- **V2 계열**: 원시값 0–255이며, 임계값과 같은 1.5–3.6 mm 눈금입니다.
+- 노이즈는 보통 ±1–2 단위입니다. 너무 자주 깜빡이는 키가 있으면 *노이즈 무시* 값을 올려 보세요.
+
+## 2. 윈도우 키 입력 지점 바꾸기 (Synapse에서 안 되는 키)
+
+V3 펌웨어의 센서 매트릭스에는 윈도우 키(fwID `127`)가 다른 키와 똑같이 아날로그 키로 들어 있습니다. Synapse 화면에서만 빠져 있을 뿐, 키별 설정 명령 `02:92`(읽기) / `02:12`(쓰기)로 다른 키처럼 값을 넣을 수 있습니다.
+
+1. **Synapse를 완전히 종료합니다** (트레이 아이콘 → 종료).
+   Synapse가 실행 중이면 키보드는 드라이버 모드이고, 입력 판정을 Synapse가 PC에서 직접 하므로 키보드에 적은 값이 쓰이지 않습니다.
+2. `web/index.html` → **키 입력 지점 (윈도우 키)** 탭에서 키(기본값 Win)를 고르고 **현재 값 읽기**를 누릅니다.
+3. 새 입력 지점(mm)을 넣고 **적용**합니다. 도구는 현재 값을 다시 읽고, 입력 지점만 바꿔 쓴 다음, 한 번 더 읽어서 값이 들어갔는지 확인합니다. 키 기능(fnId)은 그대로 둡니다.
+   - **프로필 0 (RAM)**: 바로 적용되지만 키보드를 다시 꽂거나 Synapse가 모드를 바꾸면 원래대로 돌아갑니다. 먼저 이걸로 시험해 보세요.
+   - **활성 프로필 슬롯 (플래시)**: 키보드에 저장되어 Synapse 없이 써도 유지됩니다. 단, 나중에 Synapse를 실행했다가 종료하면 Synapse가 자기 설정을 슬롯에 다시 쓰면서 이 값을 덮어쓸 수 있습니다.
+
+**알아 둘 점**
+
+- 이 명령은 V3 Pro Mini 실기기에서 확인된 것입니다([easyrazer #45](https://github.com/janeblower/easyrazer/issues/45)). V3 Pro 8KHz는 같은 펌웨어 계열이지만, 이 경로로 실기기 검증이 된 적은 없습니다. 반드시 RAM부터 시험하세요.
+- Synapse를 계속 켜 두고 쓸 거라면 이 방법이 통하지 않습니다. 그때는 Synapse의 **게임 모드**(윈도우 키 비활성화)를 쓰거나, 윈도우 키에 맞는 키캡을 끼우는 게 현실적입니다.
+- 오른쪽 윈도우 키 자리는 Razer 보드에서 Fn 키(fwID `59`)입니다. Fn은 레이어 전환용이라 조절 대상이 아닙니다.
+
+## 3. 명령줄 도구 (브라우저로 안 될 때)
+
+```bash
+pip install hidapi
+```
+
+```bash
+python python/razer_sensorfinder.py list
+```
+
+```bash
+python python/razer_sensorfinder.py monitor --csv touches.csv
+```
+
+```bash
+python python/razer_sensorfinder.py get-key --key Win
+```
+
+```bash
+python python/razer_sensorfinder.py set-key --key Win --mm 3.0
+```
+
+```bash
+python python/razer_sensorfinder.py set-key --key Win --mm 3.0 --profile active
+```
+
+- `monitor`: 깊이 스트림을 보여 줍니다(Synapse 실행 필요). Ctrl+C로 끝내면 감지 횟수 순으로 요약해 줍니다.
+- `get-key` / `set-key`: Synapse를 종료한 상태에서 씁니다. `--profile` 기본값은 `0`(RAM)이고, `active`를 주면 플래시에 저장합니다.
+
+## 기존 GitHub 자료
+
+| 저장소 | 내용 | 이번 용도에 맞는 점 |
+|---|---|---|
+| [AnalogSense/JavaScript-SDK](https://github.com/AnalogSense/JavaScript-SDK) | WebHID 기반 아날로그 입력 라이브러리. Huntsman V2/Mini/V3 Pro/V3 Pro Mini/TKL 지원(Synapse 실행 필요) | 깊이 스트림을 브라우저에서 읽는 방식의 원형. 지원 목록에 8KHz PID(`02CF`)가 없고, 누른 키의 현재값만 보여 줘서 이력이나 원인 키 찾기 기능이 없음 |
+| [janeblower/easyrazer](https://github.com/janeblower/easyrazer) | Huntsman 아날로그 보드용 Synapse 대체 앱(Windows, Rust) | 프로토콜 문서가 가장 자세함. 윈도우 키도 액추에이션 편집 가능. 단, V3 Pro 8KHz는 "구현됐으나 실기기 미검증"이고 설정에서 따로 허용해야 씀 |
+| [cidious/razer-analog-linux](https://github.com/cidious/razer-analog-linux) | Linux 데몬. `dump`로 key_id·depth 원시값 출력 | V2 Analog 전용 |
+| [meeuw/razer-analog](https://github.com/meeuw/razer-analog) | Linux, Mini Analog를 가상 마우스로 사용 | V2 계열 전용 |
+| [AnalogSense/universal-analog-plugin](https://github.com/AnalogSense/universal-analog-plugin) | Wooting Analog SDK 플러그인 | 게임 연동용 |
+
+이 저장소는 위 자료에서 **프로토콜 정보만** 참고했습니다. 코드는 새로 작성했습니다.
+
+## 프로토콜 메모
+
+- **깊이 스트림** (드라이버 모드에서만): 인터페이스 1(MI_01)의 입력 리포트입니다.
+  - V2: `07 (fwID depth)…`
+  - V3: `0B (fwID depthHi depthLo)…`, 최대 15개, `fwID 0`에서 끝납니다.
+  - 값이 바뀔 때만 오고, 빈 리포트는 전부 뗀 상태입니다.
+- **제어**: 인터페이스 3(MI_03)의 90바이트 기능 리포트(report ID 0)입니다.
+
+  ```
+  0 status | 1 transaction 0x1F | 2-3 remaining | 4 protocol | 5 size | 6 class | 7 id | 8-87 args | 88 XOR(2..87) | 89 0
+  ```
+
+  응답 status: `02` 정상, `01` busy, `03` 실패, `05` 미지원.
+- **키 설정** `02:92` / `02:12`: `[profile, fwID, layer, thrL(입력), thrH(해제), fnId, fnSize, fnData…]`, size `0x50`.
+  - V3: 임계값 = u16(1638 = 0.1 mm)의 상위 바이트입니다. 0–255가 0–4.0 mm에 대응합니다.
+  - V2: 0–255가 1.5–3.6 mm에 대응합니다.
+- **fwID**는 AT-101 위치 코드입니다. 예: Q = 17, A = 31, Space = 61, Win = 127, Fn = 59, 한자 = 152, 한/영 = 153.
+
+## 개발
+
+```bash
+node --test tests/
+```
+
+```bash
+python -m unittest discover tests
+```
+
+테스트는 패킷 레이아웃, CRC, 깊이 리포트 파싱, 임계값 변환을 확인합니다.
+웹 UI는 가상 HID 장치로 동작을 확인했습니다. 실제 키보드에서는 아직 시험하지 않았습니다.
+처음 쓸 때 문제가 있으면 *원시 HID 리포트* 내용을 이슈로 남겨 주세요.
