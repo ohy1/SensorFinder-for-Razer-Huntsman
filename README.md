@@ -124,7 +124,7 @@ python python/razer_sensorfinder.py set-key --key Win --mm 3.0 --profile active
 ### 테스트
 
 ```bash
-node --test tests/
+node --test "tests/*.test.js"
 ```
 
 ```bash
