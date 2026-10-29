@@ -85,87 +85,86 @@
 </head>
 <body>
 <main>
-  <h1>SensorFinder <span class="muted" style="font-weight: 500">for Razer Huntsman</span></h1>
-  <p class="muted">Razer Huntsman 아날로그(광학) 키보드에서 실제로 눌림이 감지되는 키와 깊이를 실시간으로 보여주고, 키별 입력 지점(윈도우 키 포함)을 직접 설정합니다.</p>
+  <div class="row" style="justify-content: space-between; align-items: flex-start">
+    <h1>SensorFinder <span class="muted" style="font-weight: 500">for Razer Huntsman</span></h1>
+    <button id="lang" data-i18n="langButton"></button>
+  </div>
+  <p class="muted" data-i18n="subtitle"></p>
 
-  <div id="unsupported" class="note hidden">이 브라우저는 WebHID를 지원하지 않습니다. 데스크톱 <b>Chrome</b> 또는 <b>Edge</b>로 여세요.</div>
+  <div id="unsupported" class="note hidden" data-i18n-html="unsupportedHtml"></div>
 
   <div class="panel">
     <div class="row">
-      <button id="connect" class="primary">키보드 연결</button>
-      <span class="status"><span id="dot" class="dot"></span><span id="devname">연결 안 됨</span></span>
-      <span class="status">리포트 <span id="reports" style="font-family: var(--mono)">0</span></span>
+      <button id="connect" class="primary" data-i18n="connect"></button>
+      <span class="status"><span id="dot" class="dot"></span><span id="devname"></span></span>
+      <span class="status"><span data-i18n="reports"></span> <span id="reports" style="font-family: var(--mono)">0</span></span>
       <span id="modehint" class="status hidden"></span>
     </div>
     <p id="connectError" class="error hidden" style="margin-top: 8px"></p>
   </div>
 
   <div class="tabs" role="tablist">
-    <button role="tab" aria-selected="true" data-tab="monitor">센서 모니터</button>
-    <button role="tab" aria-selected="false" data-tab="actuation">키 입력 지점 (윈도우 키)</button>
+    <button role="tab" aria-selected="true" data-tab="monitor" data-i18n="tabMonitor"></button>
+    <button role="tab" aria-selected="false" data-tab="actuation" data-i18n="tabActuation"></button>
   </div>
 
   <!-- ===== Monitor ===== -->
   <section id="tab-monitor">
     <div class="panel">
       <div class="row" style="justify-content: space-between">
-        <h2 style="margin: 0">키 깊이 맵</h2>
+        <h2 style="margin: 0" data-i18n="mapTitle"></h2>
         <div class="row">
-          <label>노이즈 무시: 원시값 ≤ <input id="noise" type="number" min="0" value="0"></label>
-          <button id="reset">기록 초기화</button>
-          <button id="csv">CSV 내보내기</button>
+          <label><span data-i18n="noise"></span> <input id="noise" type="number" min="0" value="0"></label>
+          <button id="reset" data-i18n="reset"></button>
+          <button id="csv" data-i18n="csv"></button>
         </div>
       </div>
       <div class="row" style="margin-top: 10px">
-        <span>입력/해제 지점</span>
+        <span data-i18n="thrLabel"></span>
         <select id="thrProfile">
-          <option value="active">활성 프로필 슬롯</option>
-          <option value="0">프로필 0 (RAM)</option>
+          <option value="active" data-i18n="optActiveSlot"></option>
+          <option value="0" data-i18n="optRam"></option>
         </select>
-        <button id="thrLoad">키보드에서 불러오기</button>
-        <span id="thrStatus" class="muted">아직 불러오지 않음 — 불러오면 입력이 실제로 됐는지 판정합니다</span>
+        <button id="thrLoad" data-i18n="thrLoad"></button>
+        <span id="thrStatus" class="muted"></span>
       </div>
       <p class="muted" style="margin-top: 8px">
-        <span class="swatch" style="background: var(--sense)"></span>감지 중(입력 지점 전)
-        <span class="swatch" style="background: var(--accent); margin-left: 10px"></span>입력 중
-        · 테두리: <b style="color: var(--warn)">주황</b> = 감지만 되고 입력된 적 없음(미세 접촉), <b class="ok">초록</b> = 입력된 적 있음 · 숫자 = 감지 횟수
-        · 감지된 키 안의 실선 = 입력 지점, 점선 = 해제 지점. 키를 클릭하면 아래 그래프에 표시됩니다.
+        <span class="swatch" style="background: var(--sense)"></span><span data-i18n="legendSense"></span>
+        <span class="swatch" style="background: var(--accent); margin-left: 10px"></span><span data-i18n="legendOn"></span>
+        <span data-i18n-html="legendRestHtml"></span>
       </p>
       <div class="kb-wrap"><div id="kb" class="kb"></div></div>
       <div id="extraKeys" class="row hidden" style="margin-top: 8px"></div>
-      <div id="noStream" class="note hidden">
-        연결은 됐지만 깊이 데이터가 들어오지 않습니다. 깊이 스트림은 키보드가 <b>드라이버 모드</b>일 때만 나옵니다.
-        <b>Razer Synapse를 실행</b>해 둔 상태(트레이 포함)에서 키를 눌러 보세요.
-      </div>
+      <div id="noStream" class="note hidden" data-i18n-html="noStreamHtml"></div>
     </div>
 
     <div class="panel">
       <div class="row" style="justify-content: space-between">
-        <h2 id="chartTitle" style="margin: 0">키 깊이 그래프 (최근 5초)</h2>
-        <label><input id="follow" type="checkbox" checked> 최근 감지된 키 따라가기</label>
+        <h2 id="chartTitle" style="margin: 0"></h2>
+        <label><input id="follow" type="checkbox" checked> <span data-i18n="follow"></span></label>
       </div>
-      <p id="chartReadout" class="muted" style="margin: 6px 0 8px; font-family: var(--mono)">키를 누르거나 맵에서 키를 클릭하세요.</p>
+      <p id="chartReadout" class="muted" style="margin: 6px 0 8px; font-family: var(--mono)"></p>
       <div id="chartWrap" class="chart-wrap"><canvas id="chart"></canvas><div id="tip" class="tip hidden"></div></div>
-      <p class="muted" style="margin-top: 6px">입력/해제 판정은 불러온 입력·해제 지점으로 계산한 <b>추정</b>입니다. Rapid Trigger는 반영하지 않습니다.</p>
+      <p class="muted" style="margin-top: 6px" data-i18n-html="chartNoteHtml"></p>
     </div>
 
     <div class="grid2">
       <div class="panel">
-        <h2>감지된 키 순위</h2>
-        <p class="muted" style="font-size: 12px">여유 = 입력 지점 − 최대 깊이. 여유가 남아 있으면 그 키는 한 번도 입력 지점까지 눌리지 않은 것입니다.</p>
+        <h2 data-i18n="rankTitle"></h2>
+        <p class="muted" style="font-size: 12px" data-i18n="rankNote"></p>
         <div class="scroll">
           <table>
-            <thead><tr><th>키</th><th class="num">감지</th><th class="num">입력</th><th class="num">최대 깊이</th><th class="num">입력 / 해제 지점</th><th class="num">여유</th></tr></thead>
-            <tbody id="ranking"><tr><td colspan="6" class="muted">아직 감지된 키가 없습니다.</td></tr></tbody>
+            <thead><tr><th data-i18n="thKey"></th><th class="num" data-i18n="thTouches"></th><th class="num" data-i18n="thInputs"></th><th class="num" data-i18n="thPeak"></th><th class="num" data-i18n="thPoints"></th><th class="num" data-i18n="thMargin"></th></tr></thead>
+            <tbody id="ranking"></tbody>
           </table>
         </div>
       </div>
       <div class="panel">
-        <h2>감지 기록 (최신순)</h2>
+        <h2 data-i18n="logTitle"></h2>
         <div class="scroll">
           <table>
-            <thead><tr><th>시각</th><th>키</th><th class="num">지속</th><th class="num">최대 깊이</th><th>판정</th></tr></thead>
-            <tbody id="events"><tr><td colspan="5" class="muted">기록 없음</td></tr></tbody>
+            <thead><tr><th data-i18n="thTime"></th><th data-i18n="thKey"></th><th class="num" data-i18n="thDuration"></th><th class="num" data-i18n="thPeak"></th><th data-i18n="thVerdict"></th></tr></thead>
+            <tbody id="events"></tbody>
           </table>
         </div>
       </div>
@@ -173,56 +172,56 @@
 
     <div class="panel">
       <div class="row" style="justify-content: space-between">
-        <h2 style="margin: 0">원시 HID 리포트 (최근 20개)</h2>
-        <label><input id="rawToggle" type="checkbox"> 표시</label>
+        <h2 style="margin: 0" data-i18n="rawTitle"></h2>
+        <label><input id="rawToggle" type="checkbox"> <span data-i18n="rawShow"></span></label>
       </div>
       <pre id="raw" class="hidden" style="margin-top: 8px"></pre>
-      <p class="muted" style="margin-top: 8px">목록에 없는 모델이거나 값이 이상하면 이 내용을 이슈로 남겨 주세요.</p>
+      <p class="muted" style="margin-top: 8px" data-i18n="rawNote"></p>
     </div>
   </section>
 
   <!-- ===== Actuation ===== -->
   <section id="tab-actuation" class="hidden">
     <div class="panel">
-      <h2>키별 입력 지점 읽기 / 설정</h2>
-      <p class="muted">Synapse가 조절 대상에서 빼놓은 키(윈도우 키 등)도 펌웨어 명령 <code>02:92</code> / <code>02:12</code>로 직접 읽고 쓸 수 있습니다.</p>
-      <div class="note">
-        <b>먼저 Synapse를 완전히 종료하세요</b> (트레이 아이콘 → 종료). Synapse가 실행 중이면 키보드는 드라이버 모드이고, 입력 판정을 Synapse가 PC에서 직접 하므로 키보드에 적은 값이 무시됩니다.
-        Synapse가 시작하거나 종료되며 모드를 바꾸면 <b>프로필 0(RAM)</b> 값은 활성 프로필 값으로 덮어써집니다.
-      </div>
+      <h2 data-i18n="actTitle"></h2>
+      <p class="muted" data-i18n-html="actIntroHtml"></p>
+      <div class="note" data-i18n-html="actWarnHtml"></div>
       <div class="row" style="margin-top: 12px">
-        <label>키 <select id="actKey"></select></label>
-        <label>대상
+        <label><span data-i18n="actKey"></span> <select id="actKey"></select></label>
+        <label><span data-i18n="actTarget"></span>
           <select id="actProfile">
-            <option value="0">프로필 0 — RAM (재연결하면 원래대로)</option>
-            <option value="active">활성 프로필 슬롯 — 플래시에 저장</option>
+            <option value="0" data-i18n="actOptRam"></option>
+            <option value="active" data-i18n="actOptSlot"></option>
           </select>
         </label>
-        <button id="actRead">현재 값 읽기</button>
+        <button id="actRead" data-i18n="actRead"></button>
       </div>
       <dl id="actInfo" class="kv hidden" style="margin-top: 12px"></dl>
       <div class="row" style="margin-top: 12px">
-        <label>새 입력 지점 <input id="actMm" type="number" step="0.1" min="0.1" max="4.0" value="2.0"> mm</label>
-        <label>해제 지점 <input id="actRelMm" type="number" step="0.1" min="0" max="4.0" value=""> mm</label>
-        <button id="actRelSuggest" title="입력 지점보다 0.2 mm 얕게">추천값</button>
-        <button id="actWrite" class="primary" disabled>적용</button>
+        <label><span data-i18n="actNewPoint"></span> <input id="actMm" type="number" step="0.1" min="0.1" max="4.0" value="2.0"> mm</label>
+        <label><span data-i18n="actRelease"></span> <input id="actRelMm" type="number" step="0.1" min="0" max="4.0" value=""> mm</label>
+        <button id="actRelSuggest" data-i18n="actSuggest" data-i18n-title="actSuggestTitle"></button>
+        <button id="actWrite" class="primary" disabled data-i18n="actApply"></button>
       </div>
-      <p class="muted" style="margin-top: 6px">
-        입력 지점: 값이 클수록 더 깊이 눌러야 입력됩니다 (V3 계열 0.1–4.0 mm, V2 계열 1.5–3.6 mm).<br>
-        해제 지점: 키가 이 깊이보다 위로 올라와야 떼어진 것으로 처리됩니다. 입력 지점보다 0.1 mm 이상 얕아야 하고, 0.1–0.2 mm 차이가 일반적입니다. 차이가 너무 작으면 경계에서 입력이 떨릴 수 있습니다. 비워 두면 기존 값을 유지합니다.
-      </p>
+      <p class="muted" style="margin-top: 6px" data-i18n-html="actHelpHtml"></p>
       <pre id="actLog" style="margin-top: 10px"></pre>
     </div>
   </section>
 
-  <p class="muted" style="margin-top: 16px; font-size: 12px">비공식 도구입니다. 프로토콜은 공개된 리버스 엔지니어링 자료(easyrazer, AnalogSense, razer-analog-linux)를 바탕으로 합니다. 사용에 따른 책임은 사용자에게 있습니다.</p>
+  <p class="muted" style="margin-top: 16px; font-size: 12px" data-i18n="footer"></p>
 </main>
 
 <script src="razer-protocol.js"></script>
+<script src="i18n.js"></script>
 <script>
 'use strict';
 const P = RazerProtocol;
 const $ = (id) => document.getElementById(id);
+const tr = (key, vars) => I18N.t(key, vars);
+
+function keyName(id) {
+  return I18N.strings[I18N.lang].keyNames[id] || P.keyName(id);
+}
 
 const state = {
   devices: [],        // opened HIDDevice objects of the keyboard
@@ -236,6 +235,8 @@ const state = {
   streamSeen: false,
   thresholds: new Map(),  // fwID -> {thrL, thrH} in threshold units
   chartKey: null,
+  thrMsg: ['thrNotLoaded', null], // [string key, () => vars], re-rendered on language change
+  lostDevice: false,
 };
 
 const CHART_MS = 5000;
@@ -252,9 +253,9 @@ function buildKeyboard() {
     el.style.top = (k.y / TOTAL_H * 100) + '%';
     el.style.width = (k.w / TOTAL_W * 100) + '%';
     el.style.height = (k.h / TOTAL_H * 100) + '%';
-    el.title = `${P.keyName(k.id)} (fwID ${k.id})`;
+    el.title = `${keyName(k.id)} (fwID ${k.id})`;
     el.innerHTML = `<div><span class="fill"></span><span class="mark"></span><span class="mark rel"></span><span class="lbl"></span><span class="cnt"></span></div>`;
-    el.querySelector('.lbl').textContent = P.shortKeyName(k.id);
+    el.querySelector('.lbl').textContent = I18N.strings[I18N.lang].keyNames[k.id] || P.shortKeyName(k.id);
     el.addEventListener('click', () => {
       selectActuationKey(k.id);
       state.chartKey = k.id;
@@ -289,12 +290,12 @@ function thrRaw(id) {
 }
 
 function verdict(e) {
-  if (e.fired === null || e.fired === undefined) return '<span class="muted">지점 미확인</span>';
+  if (e.fired === null || e.fired === undefined) return `<span class="muted">${tr('verdictUnknown')}</span>`;
   if (e.fired) {
     const n = e.activations > 1 ? ` ×${e.activations}` : '';
-    return `<span class="ok">입력됨${n}</span> <span class="muted">+${Math.round(e.firstOnMs)} ms, ${fmtMs(e.heldMs)} 유지</span>`;
+    return `<span class="ok">${tr('verdictFired')}${n}</span> <span class="muted">${tr('verdictFiredDetail', { ms: Math.round(e.firstOnMs), held: fmtMs(e.heldMs) })}</span>`;
   }
-  return `<span style="color: var(--warn)">미입력</span> <span class="muted">${diffMm(e.marginRaw)} mm 모자람</span>`;
+  return `<span style="color: var(--warn)">${tr('verdictMissed')}</span> <span class="muted">${tr('verdictShort', { mm: diffMm(e.marginRaw) })}</span>`;
 }
 
 function fmtMs(ms) {
@@ -340,27 +341,27 @@ function render() {
   for (const [id, s] of t.stats) if (!keyEls.has(id)) extra.push({ id, s, live: t.live.get(id) || 0 });
   $('extraKeys').classList.toggle('hidden', extra.length === 0);
   $('extraKeys').innerHTML = extra.map((e) =>
-    `<span class="status">레이아웃 밖 키: ${esc(P.keyName(e.id))} · ${e.s.touches}회 · 현재 ${e.live}</span>`).join('');
+    `<span class="status">${esc(tr('extraKey', { name: keyName(e.id), n: e.s.touches, live: e.live }))}</span>`).join('');
 
   const rank = t.ranking();
   $('ranking').innerHTML = rank.length ? rank.map((r) => {
     const thr = thrRaw(r.id);
     const points = thr ? `${mm(thr.press)} / ${mm(thr.release)}` : '—';
-    const margin = !thr ? '—' : r.activations ? '<span class="ok">입력됨</span>' : `${diffMm(thr.press - r.peak)} mm`;
+    const margin = !thr ? '—' : r.activations ? `<span class="ok">${tr('verdictFired')}</span>` : `${diffMm(thr.press - r.peak)} mm`;
     return `<tr>
-      <td>${esc(P.keyName(r.id))} <span class="muted">#${r.id}</span>${r.inputOn ? ' <span class="ok">●</span>' : ''}</td>
+      <td>${esc(keyName(r.id))} <span class="muted">#${r.id}</span>${r.inputOn ? ' <span class="ok">●</span>' : ''}</td>
       <td class="num">${r.touches}</td><td class="num">${thr ? r.activations : '—'}</td>
       <td class="num">${esc(depthText(r.peak))}</td><td class="num">${points}</td><td class="num">${margin}</td></tr>`;
-  }).join('') : '<tr><td colspan="6" class="muted">아직 감지된 키가 없습니다.</td></tr>';
+  }).join('') : `<tr><td colspan="6" class="muted">${tr('noKeys')}</td></tr>`;
 
   const evs = t.events.slice(-200).reverse();
   const open = [...t.open.values()].map((o) => ({ ...o, live: true }));
   const rows = [...open, ...evs].sort((a, b) => b.start - a.start);
   $('events').innerHTML = rows.length ? rows.map((e) => `<tr>
-      <td>${fmtClock(e.start)}</td><td>${esc(P.keyName(e.id))}</td>
-      <td class="num">${e.live ? '진행 중' : fmtMs(e.durationMs)}</td><td class="num">${esc(depthText(e.peak))}</td>
-      <td>${e.live ? (t.active.has(e.id) ? '<span class="ok">입력 중</span>' : '<span class="muted">감지 중</span>') : verdict(e)}</td></tr>`).join('')
-    : '<tr><td colspan="5" class="muted">기록 없음</td></tr>';
+      <td>${fmtClock(e.start)}</td><td>${esc(keyName(e.id))}</td>
+      <td class="num">${e.live ? tr('inProgress') : fmtMs(e.durationMs)}</td><td class="num">${esc(depthText(e.peak))}</td>
+      <td>${e.live ? (t.active.has(e.id) ? `<span class="ok">${tr('inputOn')}</span>` : `<span class="muted">${tr('sensing')}</span>`) : verdict(e)}</td></tr>`).join('')
+    : `<tr><td colspan="5" class="muted">${tr('noEvents')}</td></tr>`;
 
   $('reports').textContent = t.reports;
   if (!$('raw').classList.contains('hidden')) $('raw').textContent = state.rawLog.join('\n');
@@ -421,12 +422,12 @@ function drawChart() {
   }
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
-  for (let s = 5; s >= 0; s--) ctx.fillText(s ? `-${s} s` : '지금', x(now - s * 1000), pad.t + ph + 6);
+  for (let s = 5; s >= 0; s--) ctx.fillText(s ? `-${s} s` : tr('axisNow'), x(now - s * 1000), pad.t + ph + 6);
 
   const h = id === null ? null : t.history.get(id);
   const thr = id === null ? null : thrRaw(id);
-  const name = id === null ? '' : P.keyName(id);
-  $('chartTitle').textContent = id === null ? '키 깊이 그래프 (최근 5초)' : `키 깊이 그래프 — ${name} (최근 5초)`;
+  const name = id === null ? '' : keyName(id);
+  $('chartTitle').textContent = id === null ? tr('chartTitle') : tr('chartTitleKey', { name });
 
   ctx.save();
   ctx.beginPath(); ctx.rect(pad.l, pad.t, pw, ph); ctx.clip();
@@ -469,10 +470,10 @@ function drawChart() {
     ctx.textAlign = 'left';
     ctx.textBaseline = 'bottom';
     ctx.fillStyle = c.text;
-    ctx.fillText(`입력 ${mm(thr.press)} mm`, pad.l + 6, y(thr.press) - 3);
+    ctx.fillText(tr('chartAct', { mm: mm(thr.press) }), pad.l + 6, y(thr.press) - 3);
     ctx.textBaseline = 'top';
     ctx.fillStyle = c.muted;
-    ctx.fillText(`해제 ${mm(thr.release)} mm`, pad.l + 6, y(thr.release) + 3);
+    ctx.fillText(tr('chartRel', { mm: mm(thr.release) }), pad.l + 6, y(thr.release) + 3);
   }
 
   // Hover crosshair + tooltip.
@@ -485,7 +486,7 @@ function drawChart() {
     ctx.beginPath(); ctx.moveTo(Math.round(chart.hoverX) + 0.5, pad.t); ctx.lineTo(Math.round(chart.hoverX) + 0.5, pad.t + ph); ctx.stroke();
     ctx.fillStyle = c.sense;
     ctx.beginPath(); ctx.arc(chart.hoverX, y(v), 4, 0, Math.PI * 2); ctx.fill();
-    tip.textContent = `${((now - time) / 1000).toFixed(2)} s 전 · ${mm(v)} mm${thr ? (on ? ' · 입력 중' : ' · 입력 아님') : ''}`;
+    tip.textContent = tr('tipAgo', { s: ((now - time) / 1000).toFixed(2), mm: mm(v) }) + (thr ? tr(on ? 'tipOn' : 'tipOff') : '');
     tip.classList.remove('hidden');
     tip.style.left = Math.min(chart.hoverX + 12, W - tip.offsetWidth - 4) + 'px';
     tip.style.top = Math.max(0, y(v) - 30) + 'px';
@@ -493,12 +494,12 @@ function drawChart() {
     tip.classList.add('hidden');
   }
 
-  let readout = '키를 누르거나 맵에서 키를 클릭하세요.';
+  let readout = tr('readoutIdle');
   if (id !== null) {
     const live = t.live.get(id) || 0;
-    const status = !thr ? '입력/해제 지점 미확인' : t.active.has(id) ? '● 입력 중' : live ? '감지 중 (입력 전)' : '대기';
-    readout = `현재 ${mm(live)} mm · 최근 5초 최대 ${mm(peak)} mm`
-      + (thr ? ` · 입력 ${mm(thr.press)} / 해제 ${mm(thr.release)} mm` : '') + ` · ${status}`;
+    const status = tr(!thr ? 'stUnknown' : t.active.has(id) ? 'stOn' : live ? 'stSensing' : 'stIdle');
+    readout = tr('readout', { cur: mm(live), peak: mm(peak) })
+      + (thr ? tr('readoutPoints', { on: mm(thr.press), off: mm(thr.release) }) : '') + ` · ${status}`;
   }
   if (readout !== chart.readout) $('chartReadout').textContent = chart.readout = readout;
 }
@@ -506,8 +507,15 @@ function drawChart() {
 // ---------- thresholds (actuation / release points) ----------
 const EXTRA_THRESHOLD_IDS = [152, 153]; // Hanja / Hangeul on KR boards; others answer "fail"
 
-function thrStatus(text) {
-  $('thrStatus').textContent = text;
+/** Shows a status message; `vars` is a function so the text can be rebuilt in another language. */
+function thrStatus(key, vars = null) {
+  state.thrMsg = [key, vars];
+  renderThrStatus();
+}
+
+function renderThrStatus() {
+  const [key, vars] = state.thrMsg;
+  $('thrStatus').textContent = tr(key, vars ? vars() : null);
 }
 
 function applyThresholds(map) {
@@ -535,12 +543,12 @@ function restoreThresholds() {
     if (!saved) return;
     applyThresholds(new Map(Object.entries(saved.keys).map(([id, [thrL, thrH]]) => [Number(id), { thrL, thrH }])));
     state.thrProfile = saved.profile;
-    thrStatus(`저장해 둔 지점 사용 중 (프로필 ${saved.profile}, ${new Date(saved.savedAt).toLocaleString('ko-KR')}) — 설정을 바꿨다면 다시 불러오세요`);
+    thrStatus('thrCached', () => ({ p: saved.profile, date: new Date(saved.savedAt).toLocaleString(I18N.locale()) }));
   } catch (err) { /* ignore unreadable cache */ }
 }
 
 async function loadThresholds() {
-  if (!state.devices.length) return thrStatus('먼저 키보드를 연결하세요');
+  if (!state.devices.length) return thrStatus('errConnectFirst');
   $('thrLoad').disabled = true;
   try {
     const profile = $('thrProfile').value === 'active' ? await activeProfile() : 0;
@@ -548,7 +556,7 @@ async function loadThresholds() {
     const map = new Map();
     let skipped = 0;
     for (let i = 0; i < ids.length; i++) {
-      thrStatus(`불러오는 중… ${i + 1} / ${ids.length}`);
+      thrStatus('thrLoading', () => ({ i: i + 1, n: ids.length }));
       let a = null;
       for (let attempt = 0; attempt < 2 && !a; attempt++) {
         try { a = await readKey(profile, ids[i]); } catch (err) { /* retried once, then skipped */ }
@@ -557,14 +565,15 @@ async function loadThresholds() {
       if (a && a.thrL > 0) map.set(ids[i], { thrL: a.thrL, thrH: a.thrH });
       else skipped++;
     }
-    if (!map.size) throw new Error('읽은 키가 없습니다');
+    if (!map.size) throw new Error(tr('noKeysRead'));
     applyThresholds(map);
     state.thrProfile = profile;
     saveThresholds(profile);
-    thrStatus(`프로필 ${profile === 0 ? '0 (RAM)' : profile}에서 ${map.size}개 키를 불러왔습니다 (${hms(new Date())})`
-      + (skipped ? ` · ${skipped}개는 해당 없음` : ''));
+    const time = hms(new Date());
+    thrStatus('thrLoaded', () => ({ p: profile === 0 ? '0 (RAM)' : profile, n: map.size, time }));
+    if (skipped) $('thrStatus').textContent += tr('thrSkipped', { n: skipped });
   } catch (err) {
-    thrStatus(`불러오기 실패: ${err.message || err} — Synapse를 잠시 종료한 뒤 다시 시도해 보세요`);
+    thrStatus('thrFailed', () => ({ err: err.message || err }));
   } finally {
     $('thrLoad').disabled = false;
   }
@@ -585,15 +594,24 @@ function onInputReport(e) {
   if (!state.streamSeen) {
     state.streamSeen = true;
     $('noStream').classList.add('hidden');
-    showModeHint('드라이버 모드 (깊이 스트림 수신 중)');
+    renderModeHint();
   }
   state.tracker.update(P.parseDepthReport(family, bytes), e.timeStamp || performance.now());
   state.dirty = true;
 }
 
-function showModeHint(text) {
-  $('modehint').textContent = text;
-  $('modehint').classList.remove('hidden');
+function renderModeHint() {
+  $('modehint').textContent = tr('driverMode');
+  $('modehint').classList.toggle('hidden', !state.streamSeen);
+}
+
+function renderDevName() {
+  const model = P.MODELS[state.productId];
+  let name = tr('notConnected');
+  if (state.lostDevice && !state.devices.length) name = tr('disconnected');
+  else if (state.productId !== null && model) name = `Razer ${model.name}`;
+  else if (state.productId !== null) name = `PID ${state.productId.toString(16).padStart(4, '0')} (${tr('unknownModel')})`;
+  $('devname').textContent = name;
 }
 
 function hasControlCollection(dev) {
@@ -617,8 +635,8 @@ async function attach(devices) {
     }
   }
   state.control = state.devices.find(hasControlCollection) || null;
-  const name = model ? `Razer ${model.name}` : `${kb[0].productName} (PID ${state.productId.toString(16).padStart(4, '0')}, 미확인 모델)`;
-  $('devname').textContent = name;
+  state.lostDevice = false;
+  renderDevName();
   $('dot').classList.toggle('on', state.devices.length > 0);
   $('connectError').classList.add('hidden');
   fillActuationRange();
@@ -630,7 +648,7 @@ async function connect() {
   try {
     const devs = await navigator.hid.requestDevice({ filters: [{ vendorId: P.VENDOR_RAZER }] });
     await attach(devs);
-    if (!state.devices.length && devs.length) throw new Error('장치를 열 수 없습니다. 다른 프로그램이 독점하고 있는지 확인하세요.');
+    if (!state.devices.length && devs.length) throw new Error(tr('errOpen'));
   } catch (err) {
     $('connectError').textContent = String(err.message || err);
     $('connectError').classList.remove('hidden');
@@ -651,20 +669,20 @@ function exchange(packet) {
 async function exchangeNow(packet) {
   const cls = packet[6], cmd = packet[7];
   const candidates = state.control ? [state.control] : state.devices;
-  let lastErr = new Error('제어 인터페이스를 찾지 못했습니다');
+  let lastErr = new Error(tr('errNoControl'));
   for (const dev of candidates) {
     try {
       await dev.sendFeatureReport(0, packet);
       for (let i = 0; i < 20; i++) {
         await sleep(i === 0 ? 5 : 20);
         const reply = P.parseReply(await dev.receiveFeatureReport(0), cls, cmd);
-        if (!reply) throw new Error('응답 형식이 다릅니다');
+        if (!reply) throw new Error(tr('errBadReply'));
         if (reply.status === 1) continue;
-        if (reply.status !== 2) throw new Error(`키보드 응답: ${reply.statusText}`);
+        if (reply.status !== 2) throw new Error(tr('errStatus', { s: reply.statusText }));
         state.control = dev;
         return reply;
       }
-      throw new Error('키보드가 계속 busy 상태입니다');
+      throw new Error(tr('errBusy'));
     } catch (err) {
       lastErr = err;
     }
@@ -685,31 +703,31 @@ async function resolveProfile() {
 async function activeProfile() {
   const r = await exchange(P.buildPacket(P.ACTIVE_PROFILE.cls, P.ACTIVE_PROFILE.get, 1));
   const slot = r.args[0];
-  if (slot < 1 || slot > 6) throw new Error(`활성 프로필 번호가 이상합니다: ${slot}`);
+  if (slot < 1 || slot > 6) throw new Error(tr('errProfile', { n: slot }));
   return slot;
 }
 
 async function readKey(profile, key) {
   const r = await exchange(P.getKeyAssignmentPacket(profile, key, 0));
   const a = P.parseKeyAssignment(r.args);
-  if (!a || a.key !== key) throw new Error('키 정보 응답이 이상합니다: ' + P.hex(r.args.slice(0, 12)));
+  if (!a || a.key !== key) throw new Error(tr('errKeyReply', { hex: P.hex(r.args.slice(0, 12)) }));
   return a;
 }
 
 function showAssignment(a) {
   const f = P.FAMILIES[state.family || 'v3'];
   $('actInfo').innerHTML = `
-    <dt>키</dt><dd>${esc(P.keyName(a.key))} (fwID ${a.key})</dd>
-    <dt>프로필</dt><dd>${a.profile === 0 ? '0 (RAM)' : a.profile + ' (플래시 슬롯)'}</dd>
-    <dt>입력 지점 thrL</dt><dd>${a.thrL} → ≈${f.thresholdToMm(a.thrL).toFixed(2)} mm</dd>
-    <dt>해제 지점 thrH</dt><dd>${a.thrH} → ≈${f.thresholdToMm(a.thrH).toFixed(2)} mm</dd>
-    <dt>기능</dt><dd>fnId ${a.fnId} [${P.hex(a.fnData)}]</dd>`;
+    <dt>${tr('dtKey')}</dt><dd>${esc(keyName(a.key))} (fwID ${a.key})</dd>
+    <dt>${tr('dtProfile')}</dt><dd>${a.profile === 0 ? tr('profRam') : tr('profSlot', { n: a.profile })}</dd>
+    <dt>${tr('dtAct')}</dt><dd>${a.thrL} → ≈${f.thresholdToMm(a.thrL).toFixed(2)} mm</dd>
+    <dt>${tr('dtRel')}</dt><dd>${a.thrH} → ≈${f.thresholdToMm(a.thrH).toFixed(2)} mm</dd>
+    <dt>${tr('dtFn')}</dt><dd>fnId ${a.fnId} [${P.hex(a.fnData)}]</dd>`;
   $('actInfo').classList.remove('hidden');
 }
 
 async function onRead() {
   try {
-    if (!state.devices.length) throw new Error('먼저 키보드를 연결하세요');
+    if (!state.devices.length) throw new Error(tr('errConnectFirst'));
     const key = Number($('actKey').value);
     const profile = await resolveProfile();
     currentAssignment = await readKey(profile, key);
@@ -718,9 +736,9 @@ async function onRead() {
     $('actMm').value = f.thresholdToMm(currentAssignment.thrL).toFixed(1);
     $('actRelMm').value = f.thresholdToMm(currentAssignment.thrH).toFixed(1);
     $('actWrite').disabled = false;
-    actLog(`읽기 성공: ${P.keyName(key)} 프로필 ${profile}`);
+    actLog(tr('readOk', { key: keyName(key), p: profile }));
   } catch (err) {
-    actLog('읽기 실패: ' + (err.message || err));
+    actLog(tr('readFail', { err: err.message || err }));
   }
 }
 
@@ -731,17 +749,17 @@ async function onWrite() {
     const f = P.FAMILIES[state.family || 'v3'];
     const mm = Number($('actMm').value);
     const [lo, hi] = f.thresholdRangeMm;
-    if (!(mm >= lo && mm <= hi)) throw new Error(`${lo}–${hi} mm 범위로 입력하세요`);
+    if (!(mm >= lo && mm <= hi)) throw new Error(tr('errRange', { lo, hi }));
     const thrL = f.mmToThreshold(mm);
     let thrH = null;
     if ($('actRelMm').value.trim() !== '') {
       const rel = Number($('actRelMm').value);
       thrH = rel <= 0 ? 0 : f.mmToThreshold(rel);
       if (!(rel >= 0) || thrH > thrL - f.minReleaseGap) {
-        throw new Error(`해제 지점은 입력 지점(${mm} mm)보다 0.1 mm 이상 얕아야 합니다`);
+        throw new Error(tr('errRelease', { mm }));
       }
     }
-    if (profile !== 0 && !confirm(`프로필 슬롯 ${profile}의 플래시에 저장합니다. 계속할까요?`)) return;
+    if (profile !== 0 && !confirm(tr('confirmFlash', { p: profile }))) return;
 
     const before = await readKey(profile, key); // always start from the device's current value
     const wanted = P.withActuation(before, thrL, thrH, f.minReleaseGap);
@@ -756,10 +774,10 @@ async function onWrite() {
       saveThresholds(state.thrProfile ?? profile);
     }
     const mmOf = (t) => f.thresholdToMm(t).toFixed(2);
-    actLog(`${ok ? '적용 확인' : '적용했지만 읽어 온 값이 다름'}: ${P.keyName(key)} 프로필 ${profile} `
-      + `입력 ${mmOf(before.thrL)} → ${mmOf(after.thrL)} mm, 해제 ${mmOf(before.thrH)} → ${mmOf(after.thrH)} mm`);
+    actLog(`${tr(ok ? 'writeOk' : 'writeMismatch')}: ` + tr('writeDetail', { key: keyName(key), p: profile,
+      a: mmOf(before.thrL), b: mmOf(after.thrL), c: mmOf(before.thrH), d: mmOf(after.thrH) }));
   } catch (err) {
-    actLog('적용 실패: ' + (err.message || err));
+    actLog(tr('writeFail', { err: err.message || err }));
   }
 }
 
@@ -775,11 +793,27 @@ function selectActuationKey(id) {
   $('actWrite').disabled = true;
 }
 
-function buildKeySelect() {
+function fillKeySelect() {
+  const keep = $('actKey').value || String(P.WIN_KEY);
   const ids = Object.keys(P.KEY_NAMES).map(Number).sort((a, b) => a - b);
-  $('actKey').innerHTML = ids.map((id) => `<option value="${id}">${esc(P.keyName(id))} (fwID ${id})</option>`).join('');
-  $('actKey').value = String(P.WIN_KEY);
-  $('actKey').addEventListener('change', () => selectActuationKey(Number($('actKey').value)));
+  $('actKey').innerHTML = ids.map((id) => `<option value="${id}">${esc(keyName(id))} (fwID ${id})</option>`).join('');
+  $('actKey').value = keep;
+}
+
+/** Puts every visible string into the current language; safe to call again after switching. */
+function applyLanguage() {
+  I18N.apply(document);
+  for (const [id, el] of keyEls) {
+    el.title = `${keyName(id)} (fwID ${id})`;
+    el.querySelector('.lbl').textContent = I18N.strings[I18N.lang].keyNames[id] || P.shortKeyName(id);
+  }
+  fillKeySelect();
+  renderDevName();
+  renderModeHint();
+  renderThrStatus();
+  if (currentAssignment) showAssignment(currentAssignment);
+  chart.readout = '';
+  state.dirty = true;
 }
 
 // ---------- CSV ----------
@@ -790,13 +824,13 @@ function exportCsv() {
   const lines = ['type,key,fwID,start_ms,duration_ms,peak_raw,peak_mm,input,activations,first_input_ms,input_held_ms,actuation_mm,release_mm'];
   for (const e of t.events) {
     const thr = thrRaw(e.id);
-    lines.push(['touch', csvCell(P.keyName(e.id)), e.id, e.start.toFixed(1), e.durationMs.toFixed(1), e.peak, mmOr(e.peak),
+    lines.push(['touch', csvCell(keyName(e.id)), e.id, e.start.toFixed(1), e.durationMs.toFixed(1), e.peak, mmOr(e.peak),
       e.fired === null ? '' : e.fired ? 'yes' : 'no', e.activations, e.firstOnMs === null ? '' : e.firstOnMs.toFixed(1),
       e.heldMs.toFixed(1), thr ? mmOr(thr.press) : '', thr ? mmOr(thr.release) : ''].join(','));
   }
   for (const r of t.ranking()) {
     const thr = thrRaw(r.id);
-    lines.push(['summary', csvCell(P.keyName(r.id)), r.id, '', r.totalMs.toFixed(1), r.peak, mmOr(r.peak),
+    lines.push(['summary', csvCell(keyName(r.id)), r.id, '', r.totalMs.toFixed(1), r.peak, mmOr(r.peak),
       thr ? (r.activations ? 'yes' : 'no') : '', r.activations, '', '', thr ? mmOr(thr.press) : '', thr ? mmOr(thr.release) : ''].join(','));
   }
   const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv' });
@@ -814,8 +848,13 @@ function csvCell(s) {
 // ---------- wiring ----------
 function init() {
   buildKeyboard();
-  buildKeySelect();
+  applyLanguage();
   selectActuationKey(P.WIN_KEY);
+  $('actKey').addEventListener('change', () => selectActuationKey(Number($('actKey').value)));
+  $('lang').addEventListener('click', () => {
+    I18N.set(I18N.lang === 'ko' ? 'en' : 'ko');
+    applyLanguage();
+  });
   document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => {
     document.querySelectorAll('.tabs button').forEach((x) => x.setAttribute('aria-selected', String(x === b)));
     $('tab-monitor').classList.toggle('hidden', b.dataset.tab !== 'monitor');
@@ -847,7 +886,8 @@ function init() {
       state.devices = state.devices.filter((d) => d !== e.device);
       if (state.control === e.device) state.control = null;
       $('dot').classList.toggle('on', state.devices.length > 0);
-      if (!state.devices.length) $('devname').textContent = '연결 끊김';
+      if (!state.devices.length) state.lostDevice = true;
+      renderDevName();
     });
   }
   requestAnimationFrame(render);

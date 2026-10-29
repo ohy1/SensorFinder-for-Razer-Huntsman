@@ -79,8 +79,8 @@
     102: 'Num 6', 103: 'Num 3', 104: 'Num .', 105: 'Num -', 106: 'Num +', 107: 'Num =',
     108: 'Num Enter', 110: 'Esc', 112: 'F1', 113: 'F2', 114: 'F3', 115: 'F4', 116: 'F5', 117: 'F6',
     118: 'F7', 119: 'F8', 120: 'F9', 121: 'F10', 122: 'F11', 123: 'F12', 124: 'PrtSc',
-    125: 'Scroll Lock', 126: 'Pause', 127: 'Win', 129: 'Menu', 150: '무변환', 151: '가나',
-    152: '한자', 153: '한/영', 154: '변환',
+    125: 'Scroll Lock', 126: 'Pause', 127: 'Win', 129: 'Menu', 150: 'Muhenkan', 151: 'Kana',
+    152: 'Hanja', 153: 'Han/Yeong', 154: 'Henkan',
   };
 
   // Shorter captions for the keyboard map where the full name does not fit a 1u key.

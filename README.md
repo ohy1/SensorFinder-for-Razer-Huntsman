@@ -4,10 +4,13 @@
 > It shows which keys the sensors register, how deep they go, and whether each press actually crossed the actuation point.
 > It can also set per-key actuation and release points, including keys Synapse hides, such as the Windows key.
 > Open the page in desktop Chrome/Edge: https://ohy1.github.io/SensorFinder-for-Razer-Huntsman/
+> The page follows your browser language (Korean / English) and has a language button at the top right.
 
 Razer Huntsman 아날로그(광학) 키보드에서 **어느 키의 센서가 얼마나 눌린 것으로 감지되는지**를 실시간으로 보여 주는 진단 도구입니다.
 호환 키캡을 끼운 뒤 키보드가 미세한 입력을 잡을 때 원인 키를 찾는 용도로 만들었습니다.
 Synapse가 설정 대상에서 빼놓은 키(**윈도우 키** 등)의 입력 지점(액추에이션)을 직접 읽고 바꾸는 기능도 들어 있습니다.
+
+화면은 브라우저 언어에 맞춰 한국어 또는 영어로 나오고, 오른쪽 위 버튼으로 바꿀 수 있습니다.
 
 **빠른 실행**: 저장소를 내려받은 뒤 `web/index.html`을 데스크톱 Chrome / Edge로 엽니다. GitHub Pages를 켜면 <https://ohy1.github.io/SensorFinder-for-Razer-Huntsman/>에서도 열 수 있습니다.
 

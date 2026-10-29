@@ -179,3 +179,16 @@ test('history keeps the recent window plus one earlier sample', () => {
   assert.deepEqual(t.history.get(31), [[50, 6], [200, 7]]);
   assert.equal(t.lastId, 31);
 });
+
+test('Korean and English UI strings define the same keys and placeholders', () => {
+  const { STRINGS } = require('../web/i18n.js');
+  const placeholders = (v) => (typeof v === 'string' ? [...v.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort() : []);
+  assert.deepEqual(Object.keys(STRINGS.ko).sort(), Object.keys(STRINGS.en).sort());
+  for (const key of Object.keys(STRINGS.ko)) {
+    assert.deepEqual(placeholders(STRINGS.ko[key]), placeholders(STRINGS.en[key]), key);
+  }
+  // Every string the page references exists.
+  const html = require('fs').readFileSync(require('path').join(__dirname, '../web/index.html'), 'utf8');
+  const used = [...html.matchAll(/data-i18n(?:-html|-title)?="(\w+)"/g), ...html.matchAll(/tr\('(\w+)'/g)].map((m) => m[1]);
+  for (const key of used) assert.ok(key in STRINGS.en, key);
+});
