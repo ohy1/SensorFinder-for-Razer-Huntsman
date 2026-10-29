@@ -122,8 +122,8 @@
       <div class="row" style="margin-top: 10px">
         <span data-i18n="thrLabel"></span>
         <select id="thrProfile">
-          <option value="active" data-i18n="optActiveSlot"></option>
           <option value="0" data-i18n="optRam"></option>
+          <option value="active" data-i18n="optActiveSlot"></option>
         </select>
         <button id="thrLoad" data-i18n="thrLoad"></button>
         <span id="thrStatus" class="muted"></span>
@@ -552,7 +552,11 @@ async function loadThresholds() {
   if (!state.devices.length) return thrStatus('errConnectFirst');
   $('thrLoad').disabled = true;
   try {
-    const profile = $('thrProfile').value === 'active' ? await activeProfile() : 0;
+    let profile = 0, fellBack = false;
+    if ($('thrProfile').value === 'active') {
+      // In driver mode profile 0 holds a copy of the active profile, so it is a sound fallback.
+      try { profile = await activeProfile(); } catch (err) { fellBack = true; }
+    }
     const ids = [...keyEls.keys(), ...EXTRA_THRESHOLD_IDS];
     const map = new Map();
     let zero = 0, lastErr = null;
@@ -583,6 +587,7 @@ async function loadThresholds() {
     const time = hms(new Date());
     thrStatus('thrLoaded', () => ({ p: profile === 0 ? '0 (RAM)' : profile, n: map.size, time }));
     if (skipped) $('thrStatus').textContent += tr('thrSkipped', { n: skipped });
+    if (fellBack) $('thrStatus').textContent += tr('thrFellBack');
   } catch (err) {
     thrStatus('thrFailed', () => ({ err: err.message || err }));
   } finally {
@@ -724,7 +729,13 @@ async function resolveProfile() {
 }
 
 async function activeProfile() {
-  const r = await exchange(P.buildPacket(P.ACTIVE_PROFILE.cls, P.ACTIVE_PROFILE.get, 1));
+  let r;
+  try {
+    r = await exchange(P.buildPacket(P.ACTIVE_PROFILE.cls, P.ACTIVE_PROFILE.get, 1));
+  } catch (err) {
+    // Seen on the V3 Pro 8KHz: while Synapse runs (driver mode) 05:84 gets no answer.
+    throw new Error(tr('errActiveProfile', { err: err.message || err }));
+  }
   const slot = r.args[0];
   if (slot < 1 || slot > 6) throw new Error(tr('errProfile', { n: slot }));
   return slot;
