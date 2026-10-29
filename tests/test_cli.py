@@ -64,6 +64,19 @@ class ControlTests(unittest.TestCase):
             mm = tenth / 10
             self.assertEqual(round(rs.V3.threshold_to_mm(rs.V3.mm_to_threshold(mm)), 1), mm)
 
+    def test_safety_allowlist(self):
+        rs.check_packet(rs.build_packet(0x02, 0x92, 80, [0, 127, 0]), rs.V3)
+        rs.check_packet(rs.build_packet(0x00, 0x84, 2), rs.V3)
+        ok = rs.KeyAssignment(1, 127, 0, 173, 160, 2, b"\x08\x00")
+        rs.check_packet(rs.build_packet(0x02, 0x12, 80, ok.to_args()), rs.V3)
+        for cls, cmd, args in [(0x00, 0x04, [1, 0]), (0xFE, 0x28, []), (0x06, 0x09, []), (0x0F, 0x02, [])]:
+            with self.assertRaises(rs.SafetyError):
+                rs.check_packet(rs.build_packet(cls, cmd, len(args), args), rs.V3)
+        for bad in (rs.KeyAssignment(1, 127, 1, 173, 160, 2, b""), rs.KeyAssignment(7, 127, 0, 173, 160, 2, b""),
+                    rs.KeyAssignment(1, 200, 0, 173, 160, 2, b""), rs.KeyAssignment(1, 127, 0, 173, 170, 2, b"")):
+            with self.assertRaises(rs.SafetyError):
+                rs.check_packet(rs.build_packet(0x02, 0x12, 80, bad.to_args()), rs.V3)
+
     def test_key_lookup(self):
         self.assertEqual(rs.key_id("win"), 127)
         self.assertEqual(rs.key_id("127"), 127)

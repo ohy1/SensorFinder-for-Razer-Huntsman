@@ -186,6 +186,11 @@
       <h2 data-i18n="actTitle"></h2>
       <p class="muted" data-i18n-html="actIntroHtml"></p>
       <div class="note" data-i18n-html="actWarnHtml"></div>
+      <div class="note" style="border-left-color: var(--danger)">
+        <b data-i18n="safetyTitle"></b>
+        <div data-i18n-html="safetyHtml" style="margin: 6px 0"></div>
+        <label><input id="safetyAgree" type="checkbox"> <span data-i18n="safetyAgree"></span></label>
+      </div>
       <div class="row" style="margin-top: 12px">
         <label><span data-i18n="actKey"></span> <select id="actKey"></select></label>
         <label><span data-i18n="actTarget"></span>
@@ -202,13 +207,15 @@
         <label><span data-i18n="actRelease"></span> <input id="actRelMm" type="number" step="0.1" min="0" max="4.0" value=""> mm</label>
         <button id="actRelSuggest" data-i18n="actSuggest" data-i18n-title="actSuggestTitle"></button>
         <button id="actWrite" class="primary" disabled data-i18n="actApply"></button>
+        <button id="actUndo" class="hidden"></button>
       </div>
       <p class="muted" style="margin-top: 6px" data-i18n-html="actHelpHtml"></p>
       <pre id="actLog" style="margin-top: 10px"></pre>
     </div>
   </section>
 
-  <p class="muted" style="margin-top: 16px; font-size: 12px" data-i18n="footer"></p>
+  <p class="muted" style="margin-top: 16px; font-size: 12px"><span data-i18n="footer"></span>
+    <a href="https://github.com/ohy1/SensorFinder-for-Razer-Huntsman/blob/HEAD/SAFETY.md" target="_blank" rel="noopener" data-i18n="safetyLink"></a></p>
 </main>
 
 <script src="razer-protocol.js"></script>
@@ -235,6 +242,7 @@ const state = {
   streamSeen: false,
   thresholds: new Map(),  // fwID -> {thrL, thrH} in threshold units
   chartKey: null,
+  undo: null,          // {profile, key, thrL, thrH} replaced by the last write
   thrMsg: ['thrNotLoaded', null], // [string key, () => vars], re-rendered on language change
   lostDevice: false,
 };
@@ -677,6 +685,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // One request at a time: the actuation tab and threshold loading share the control channel.
 let exchangeChain = Promise.resolve();
 function exchange(packet) {
+  try {
+    P.checkPacket(packet, state.family || 'v3'); // refuse anything outside the safety allowlist
+  } catch (err) {
+    return Promise.reject(new Error(tr('errSafety', { detail: err.message })));
+  }
   const run = exchangeChain.then(() => exchangeNow(packet));
   exchangeChain = run.catch(() => {});
   return run;
@@ -776,7 +789,7 @@ async function onRead() {
     const f = P.FAMILIES[state.family || 'v3'];
     $('actMm').value = f.thresholdToMm(currentAssignment.thrL).toFixed(1);
     $('actRelMm').value = f.thresholdToMm(currentAssignment.thrH).toFixed(1);
-    $('actWrite').disabled = false;
+    $('actWrite').disabled = !$('safetyAgree').checked;
     actLog(tr('readOk', { key: keyName(key), p: profile }));
   } catch (err) {
     actLog(tr('readFail', { err: err.message || err }));
@@ -800,6 +813,8 @@ async function onWrite() {
         throw new Error(tr('errRelease', { mm }));
       }
     }
+    if (!$('safetyAgree').checked) throw new Error(tr('errConsent'));
+    if (await synapseLikelyRunning() && !confirm(tr('confirmSynapse'))) return;
     if (profile !== 0 && !confirm(tr('confirmFlash', { p: profile }))) return;
 
     const before = await readKey(profile, key); // always start from the device's current value
@@ -817,8 +832,52 @@ async function onWrite() {
     const mmOf = (t) => f.thresholdToMm(t).toFixed(2);
     actLog(`${tr(ok ? 'writeOk' : 'writeMismatch')}: ` + tr('writeDetail', { key: keyName(key), p: profile,
       a: mmOf(before.thrL), b: mmOf(after.thrL), c: mmOf(before.thrH), d: mmOf(after.thrH) }));
+    state.undo = { profile, key, thrL: before.thrL, thrH: before.thrH };
+    renderUndo();
   } catch (err) {
     actLog(tr('writeFail', { err: err.message || err }));
+  }
+}
+
+/** Driver mode means Synapse decides presses and may write its own values back. */
+async function synapseLikelyRunning() {
+  try {
+    const r = await exchange(P.getDeviceModePacket());
+    if (r.args[0] === P.DEVICE_MODE.driver) return true;
+    if (r.args[0] === P.DEVICE_MODE.hardware) return false;
+  } catch (err) { /* unanswered: judge by the depth stream below */ }
+  return state.streamSeen; // the depth stream only flows in driver mode
+}
+
+function renderUndo() {
+  const u = state.undo;
+  $('actUndo').classList.toggle('hidden', !u);
+  if (!u) return;
+  const f = fam();
+  $('actUndo').textContent = tr('undoBtn', { key: keyName(u.key), a: f.thresholdToMm(u.thrL).toFixed(2), b: f.thresholdToMm(u.thrH).toFixed(2) });
+}
+
+/** Puts back exactly the points the last write replaced, on the same key and profile. */
+async function onUndo() {
+  const u = state.undo;
+  if (!u) return;
+  try {
+    if (u.profile !== 0 && !confirm(tr('confirmFlash', { p: u.profile }))) return;
+    const now = await readKey(u.profile, u.key);
+    await exchange(P.setKeyAssignmentPacket({ ...now, thrL: u.thrL, thrH: u.thrH }));
+    const after = await readKey(u.profile, u.key);
+    const ok = after.thrL === u.thrL && after.thrH === u.thrH;
+    if (state.thresholds.has(u.key) && after.thrL > 0) {
+      state.thresholds.set(u.key, { thrL: after.thrL, thrH: after.thrH });
+      applyThresholds(state.thresholds);
+      saveThresholds(state.thrProfile ?? u.profile);
+    }
+    if (currentAssignment && currentAssignment.key === u.key) { currentAssignment = after; showAssignment(after); }
+    actLog(tr(ok ? 'undoOk' : 'writeMismatch') + `: ${keyName(u.key)}`);
+    state.undo = null;
+    renderUndo();
+  } catch (err) {
+    actLog(tr('undoFail', { err: err.message || err }));
   }
 }
 
@@ -853,6 +912,7 @@ function applyLanguage() {
   renderModeHint();
   renderThrStatus();
   if (currentAssignment) showAssignment(currentAssignment);
+  renderUndo();
   chart.readout = '';
   state.dirty = true;
 }
@@ -912,6 +972,12 @@ function init() {
   $('rawToggle').addEventListener('change', () => { $('raw').classList.toggle('hidden', !$('rawToggle').checked); state.dirty = true; });
   $('actRead').addEventListener('click', onRead);
   $('actWrite').addEventListener('click', onWrite);
+  $('actUndo').addEventListener('click', onUndo);
+  try { $('safetyAgree').checked = localStorage.getItem('rsf.safetyAgreed.v1') === '1'; } catch (err) { /* ask again */ }
+  $('safetyAgree').addEventListener('change', () => {
+    try { localStorage.setItem('rsf.safetyAgreed.v1', $('safetyAgree').checked ? '1' : '0'); } catch (err) { /* not remembered */ }
+    $('actWrite').disabled = !$('safetyAgree').checked || !currentAssignment;
+  });
   $('actRelSuggest').addEventListener('click', () => {
     const mm = Number($('actMm').value);
     if (mm > 0) $('actRelMm').value = Math.max(0, mm - 0.2).toFixed(1);

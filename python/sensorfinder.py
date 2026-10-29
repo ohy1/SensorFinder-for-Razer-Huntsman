@@ -177,6 +177,40 @@ def crc(p: bytes | bytearray) -> int:
     return c
 
 
+# Safety allowlist, same as web/razer-protocol.js: nothing else is ever sent. Firmware/bootloader,
+# mode switching (00:04, whose mode 01 drops the keyboard into its bootloader), factory calibration
+# (FE:xx) and profile management are refused before reaching the keyboard.
+ALLOWED_COMMANDS = {
+    (0x02, 0x92): "read key assignment",
+    (0x02, 0x12): "write key assignment",
+    (0x05, 0x84): "read active profile",
+    (0x00, 0x84): "read device mode",
+}
+MODE_DRIVER = 0x03
+
+
+class SafetyError(Exception):
+    pass
+
+
+def check_packet(packet: bytes, family: "Family") -> None:
+    """Raise SafetyError unless the packet is allowed; writes must look like what set-key produces."""
+    cls, cmd = packet[6], packet[7]
+    if len(packet) != PACKET_LEN or (cls, cmd) not in ALLOWED_COMMANDS:
+        raise SafetyError(f"command {cls:02X}:{cmd:02X} is not allowed")
+    if (cls, cmd) != (0x02, 0x12):
+        return
+    a = KeyAssignment.parse(packet[8:88])
+    if a.profile > 6:
+        raise SafetyError("profile out of range")
+    if a.layer != 0:
+        raise SafetyError("only the normal layer may be written")
+    if a.key not in KEY_NAMES:
+        raise SafetyError(f"unknown key {a.key}")
+    if not (a.thr_l == 0 and a.thr_h == 0) and a.thr_h > a.thr_l - family.min_release_gap:
+        raise SafetyError("release point too close to the actuation point")
+
+
 def parse_reply(data: bytes, cls: int, cmd: int) -> tuple[int, bytes] | None:
     """Return (status, args) from a reply that may or may not start with the report ID."""
     for off in (0, 1):
@@ -237,7 +271,8 @@ def open_path(hid, path):
 
 
 class Control:
-    def __init__(self, hid, interfaces):
+    def __init__(self, hid, interfaces, family: "Family" = None):
+        self.family = family or V3
         self.dev = None
         errors = []
         # Interface 3 is the control channel on every model; try it first.
@@ -253,6 +288,10 @@ class Control:
             raise SystemExit(f"could not open the control interface (3): {errors}")
 
     def exchange(self, packet: bytes) -> bytes:
+        try:
+            check_packet(packet, self.family)
+        except SafetyError as e:
+            raise SystemExit(f"blocked by the safety policy: {e}")
         cls, cmd = packet[6], packet[7]
         # Synapse shares the channel while it runs: a reply to its request means send ours again.
         for attempt in range(5):
@@ -276,6 +315,13 @@ class Control:
         if not 1 <= slot <= 6:
             raise SystemExit(f"unexpected active profile: {slot}")
         return slot
+
+    def driver_mode(self) -> bool | None:
+        """True while Synapse runs (driver mode); None if the keyboard does not say."""
+        try:
+            return self.exchange(build_packet(0x00, 0x84, 2))[0] == MODE_DRIVER
+        except SystemExit:
+            return None
 
     def read_key(self, profile: int, key: int) -> KeyAssignment:
         # Another program (Synapse) may be using the channel: only accept the reply we asked for.
@@ -356,7 +402,7 @@ def _control(args):
     hid = _hid()
     pid, interfaces = find_keyboard(hid)
     name, family = MODELS[pid]
-    ctl = Control(hid, interfaces)
+    ctl = Control(hid, interfaces, family)
     profile = ctl.active_profile() if args.profile == "active" else 0
     return name, family, ctl, profile
 
@@ -387,6 +433,10 @@ def cmd_set_key(args):
         thr_h = 0 if args.release_mm <= 0 else family.mm_to_threshold(args.release_mm)
         if thr_h > thr_l - family.min_release_gap:
             raise SystemExit("--release-mm must be at least 0.1 mm shallower than --mm")
+    if ctl.driver_mode() and not args.yes:
+        print("Razer Synapse appears to be running (driver mode): the value may be reverted or not take effect.")
+        if input("continue anyway? [y/N] ").strip().lower() != "y":
+            return
     if profile != 0 and not args.yes:
         if input(f"write to flash slot {profile}? [y/N] ").strip().lower() != "y":
             return

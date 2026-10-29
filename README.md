@@ -5,6 +5,7 @@
 > It can also set per-key actuation and release points, including keys Synapse hides, such as the Windows key.
 > Open the page in desktop Chrome/Edge: https://ohy1.github.io/SensorFinder-for-Razer-Huntsman/
 > The page follows your browser language (Korean / English) and has a language button at the top right.
+> Safety policy and recovery steps: [SAFETY.md](SAFETY.md).
 
 Razer Huntsman 아날로그(광학) 키보드에서 **어느 키의 센서가 얼마나 눌린 것으로 감지되는지**를 실시간으로 보여 주는 진단 도구입니다.
 호환 키캡을 끼운 뒤 키보드가 미세한 입력을 잡을 때 원인 키를 찾는 용도로 만들었습니다.
@@ -169,6 +170,12 @@ python -m unittest discover tests
 테스트는 패킷 레이아웃, CRC, 깊이 리포트 파싱, 임계값 변환을 확인합니다.
 웹 UI는 가상 HID 장치로 동작을 확인했습니다. 실제 키보드에서는 아직 시험하지 않았습니다.
 처음 쓸 때 문제가 있으면 *원시 HID 리포트* 내용을 이슈로 남겨 주세요.
+
+## 안전 정책
+
+도구가 키보드에 보내는 명령은 읽기 3가지와 키 지점 쓰기 1가지뿐이며, 나머지는 코드에서 차단됩니다.
+쓰기 전에는 동의 확인, Synapse 실행 경고, 값 범위 검사, 쓴 뒤 다시 읽어 확인하기, 되돌리기 버튼이 적용됩니다.
+자세한 내용과 문제가 생겼을 때 복구하는 방법은 [SAFETY.md](SAFETY.md)를 보세요.
 
 ## 라이선스
 

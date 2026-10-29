@@ -394,6 +394,49 @@
     return out;
   }
 
+  // 00:84 get device mode: args[0] = 0x00 hardware (keyboard types itself), 0x03 driver (Synapse).
+  const DEVICE_MODE = { cls: 0x00, get: 0x84, size: 2, hardware: 0x00, driver: 0x03 };
+
+  function getDeviceModePacket() {
+    return buildPacket(DEVICE_MODE.cls, DEVICE_MODE.get, DEVICE_MODE.size);
+  }
+
+  /**
+   * Safety allowlist: the only control commands this tool ever sends. Firmware/bootloader,
+   * mode switching (00:04, whose mode 01 drops the keyboard into its bootloader), factory
+   * calibration (FE:xx), profile management and everything else are refused before sending.
+   */
+  const ALLOWED_COMMANDS = [
+    [0x02, 0x92, 'read key assignment'],
+    [0x02, 0x12, 'write key assignment'],
+    [0x05, 0x84, 'read active profile'],
+    [0x00, 0x84, 'read device mode'],
+  ];
+
+  class SafetyError extends Error {}
+
+  /**
+   * Throws SafetyError unless `packet` is an allowed command and, for a write, stays within
+   * what the actuation tab can produce: profile 0-6, normal layer, a known key, and a release
+   * point at least minReleaseGap below the actuation point (0/0 = host decides is allowed).
+   */
+  function checkPacket(packet, family) {
+    const p = toBytes(packet);
+    const cls = p[6], cmd = p[7];
+    if (p.length !== PACKET_LEN || !ALLOWED_COMMANDS.some(([c, i]) => c === cls && i === cmd)) {
+      throw new SafetyError(`command ${hex([cls, cmd])} is not allowed`);
+    }
+    if (cls !== KEY_ASSIGNMENT.cls || cmd !== KEY_ASSIGNMENT.set) return;
+    const a = parseKeyAssignment(p.subarray(8, 88));
+    const f = FAMILIES[family] || FAMILIES.v3;
+    if (!a || a.profile > 6) throw new SafetyError('profile out of range');
+    if (a.layer !== 0) throw new SafetyError('only the normal layer may be written');
+    if (!KEY_NAMES[a.key]) throw new SafetyError(`unknown key ${a.key}`);
+    if (!(a.thrL === 0 && a.thrH === 0) && a.thrH > a.thrL - f.minReleaseGap) {
+      throw new SafetyError('release point too close to the actuation point');
+    }
+  }
+
   function hex(bytes) {
     return Array.from(toBytes(bytes), (b) => b.toString(16).padStart(2, '0')).join(' ');
   }
@@ -403,5 +446,6 @@
     keyName, shortKeyName, layoutKeys, familyOf, parseDepthReport, DepthTracker,
     PACKET_LEN, TRANSACTION_ID, KEY_ASSIGNMENT, ACTIVE_PROFILE, buildPacket, crc, parseReply,
     getKeyAssignmentPacket, parseKeyAssignment, setKeyAssignmentPacket, withActuation, hex,
+    DEVICE_MODE, getDeviceModePacket, ALLOWED_COMMANDS, SafetyError, checkPacket,
   };
 });

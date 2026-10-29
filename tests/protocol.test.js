@@ -192,3 +192,25 @@ test('Korean and English UI strings define the same keys and placeholders', () =
   const used = [...html.matchAll(/data-i18n(?:-html|-title)?="(\w+)"/g), ...html.matchAll(/tr\('(\w+)'/g)].map((m) => m[1]);
   for (const key of used) assert.ok(key in STRINGS.en, key);
 });
+
+test('safety allowlist refuses everything but the four known commands', () => {
+  // Allowed reads and a sane write.
+  P.checkPacket(P.getKeyAssignmentPacket(0, 127), 'v3');
+  P.checkPacket(P.buildPacket(0x05, 0x84, 1), 'v3');
+  P.checkPacket(P.getDeviceModePacket(), 'v3');
+  const ok = { profile: 1, key: 127, layer: 0, thrL: 173, thrH: 160, fnId: 2, fnData: [8, 0] };
+  P.checkPacket(P.setKeyAssignmentPacket(ok), 'v3');
+  P.checkPacket(P.setKeyAssignmentPacket({ ...ok, thrL: 0, thrH: 0 }), 'v3'); // undo to "host decides"
+
+  // Mode switch (01 = bootloader), factory calibration write, flash, lighting: refused.
+  for (const [cls, cmd, args] of [[0x00, 0x04, [0x01, 0]], [0xfe, 0x28, []], [0x06, 0x09, []], [0x0f, 0x02, []], [0x05, 0x04, [1]]]) {
+    assert.throws(() => P.checkPacket(P.buildPacket(cls, cmd, args.length, args), 'v3'), P.SafetyError);
+  }
+  // Writes outside what the UI produces: refused.
+  assert.throws(() => P.checkPacket(P.setKeyAssignmentPacket({ ...ok, layer: 1 }), 'v3'), P.SafetyError);
+  assert.throws(() => P.checkPacket(P.setKeyAssignmentPacket({ ...ok, profile: 7 }), 'v3'), P.SafetyError);
+  assert.throws(() => P.checkPacket(P.setKeyAssignmentPacket({ ...ok, key: 200 }), 'v3'), P.SafetyError);
+  assert.throws(() => P.checkPacket(P.setKeyAssignmentPacket({ ...ok, thrH: 170 }), 'v3'), P.SafetyError);
+  // Wrong length.
+  assert.throws(() => P.checkPacket(new Uint8Array(10), 'v3'), P.SafetyError);
+});
