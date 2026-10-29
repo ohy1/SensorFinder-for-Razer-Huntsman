@@ -6,11 +6,11 @@ Requires `pip install hidapi`.
 
   python sensorfinder.py list
   python sensorfinder.py monitor [--csv log.csv] [--noise N]
-  python sensorfinder.py get-key [--key Win] [--profile 0|active]
-  python sensorfinder.py set-key --mm 3.0 [--release-mm 2.8] [--key Win] [--profile 0|active]
+  python sensorfinder.py get-key [--key Win] [--profile 0|1-6|active]
+  python sensorfinder.py set-key --mm 3.0 [--release-mm 2.8] [--key Win] [--profile 0|1-6|active]
 
 The depth stream only flows in driver mode, i.e. while Razer Synapse is running.
-Actuation set with `set-key` only matters while Synapse is NOT running.
+Write with Synapse closed: while it runs it shares the channel and may overwrite profile 0 (RAM).
 """
 
 from __future__ import annotations
@@ -44,8 +44,15 @@ class Family:
     def threshold_to_mm(self, t: int) -> float:
         return self.zero_mm + t / 255 * (self.full_mm - self.zero_mm)
 
+    def mm_to_units(self, mm: float) -> float:
+        """Unrounded, unclamped threshold units, for range checks before converting."""
+        return (mm - self.zero_mm) / (self.full_mm - self.zero_mm) * 255
+
     def mm_to_threshold(self, mm: float) -> int:
-        t = round((mm - self.zero_mm) / (self.full_mm - self.zero_mm) * 255)
+        u = self.mm_to_units(mm)
+        if not math.isfinite(u):  # huge input overflows; it is clamped below like any other
+            u = 255 if u > 0 else 0
+        t = round(u)
         # V2 accepts 0; on V3 threshold 0 would mean "pressed at rest".
         return max(0 if self.entry_size == 2 else 1, min(255, t))
 
@@ -472,7 +479,7 @@ def _control(args):
     name, family, _ = MODELS[pid]
     rng = write_range(pid)
     ctl = Control(hid, interfaces, family, rng)
-    profile = ctl.active_profile() if args.profile == "active" else 0
+    profile = ctl.active_profile() if args.profile == "active" else int(args.profile)
     return name, family, rng, ctl, profile
 
 
@@ -507,12 +514,22 @@ def confirm(question: str) -> bool:
         return False
 
 
-def _restore_command(family: Family, a: KeyAssignment, profile_arg: str) -> str:
+def mm_exact(family: Family, thr: int) -> str:
+    """The shortest mm text that converts back to exactly `thr`."""
+    mm = family.threshold_to_mm(thr)
+    for digits in (2, 3, 4):
+        if family.mm_to_threshold(round(mm, digits)) == thr:
+            return f"{mm:.{digits}f}"
+    return f"{mm:.5f}"
+
+
+def _restore_command(family: Family, a: KeyAssignment) -> str:
     if a.thr_l == 0 and a.thr_h == 0:
         return "(0/0 = decided by Synapse/host: re-apply the profile in Razer Synapse)"
+    # The explicit slot number, so it restores the same slot even if the active one changes.
     return (
-        f"python sensorfinder.py set-key --key {a.key} --profile {profile_arg} "
-        f"--mm {family.threshold_to_mm(a.thr_l):.2f} --release-mm {family.threshold_to_mm(a.thr_h):.2f}"
+        f"python sensorfinder.py set-key --key {a.key} --profile {a.profile} "
+        f"--mm {mm_exact(family, a.thr_l)} --release-mm {mm_exact(family, a.thr_h)}"
     )
 
 
@@ -520,16 +537,22 @@ def cmd_set_key(args):
     name, family, rng, ctl, profile = _control(args)
     if not math.isfinite(args.mm) or (args.release_mm is not None and not math.isfinite(args.release_mm)):
         raise SystemExit("--mm and --release-mm must be numbers")
-    thr_l = family.mm_to_threshold(args.mm)
-    if not rng[0] <= thr_l <= rng[1]:
+    # Check the unrounded value first: out-of-range input must not be clamped into range.
+    units = family.mm_to_units(args.mm)
+    if not rng[0] - 0.5 <= units < rng[1] + 0.5:
         lo_mm, hi_mm = mm_bound(family, rng, rng[0]), mm_bound(family, rng, rng[1])
         raise SystemExit(f"--mm must be within {lo_mm}..{hi_mm} for the {name}")
+    thr_l = family.mm_to_threshold(args.mm)
     key = key_id(args.key)
     thr_h = None
     if args.release_mm is not None:
-        thr_h = 0 if args.release_mm <= 0 else family.mm_to_threshold(args.release_mm)
-        if not family.min_release <= thr_h <= thr_l - family.min_release_gap:
+        rel_units = 0 if args.release_mm <= 0 else family.mm_to_units(args.release_mm)
+        if rel_units < family.min_release - 0.5:
+            floor = math.ceil(family.threshold_to_mm(family.min_release) * 100) / 100
+            raise SystemExit(f"--release-mm cannot be shallower than {floor:.2f} mm on the {name} (firmware limit)")
+        if rel_units >= thr_l - family.min_release_gap + 0.5:
             raise SystemExit("--release-mm must be at least 0.1 mm shallower than --mm")
+        thr_h = 0 if args.release_mm <= 0 else family.mm_to_threshold(args.release_mm)
 
     mode = ctl.driver_mode()
     if mode is not False:
@@ -545,7 +568,14 @@ def cmd_set_key(args):
     before = ctl.read_key(profile, key)
     # Shown before writing, so the original values are known even if something fails later.
     print("before:", _describe(family, before))
-    print("  to restore it:", _restore_command(family, before, args.profile))
+    print("  to restore it:", _restore_command(family, before))
+    try:
+        check_packet(build_packet(0x02, 0x12, 80, before.to_args()), family, rng)
+    except SafetyError:
+        print("note: these original values are outside this tool's range, so the command above will be refused;")
+        print("      re-applying the profile in Razer Synapse restores them.")
+        if not args.yes and not confirm("continue anyway? [y/N] "):
+            raise SystemExit("aborted, nothing written")
     wanted = before.with_actuation(thr_l, thr_h, family.min_release_gap, family.min_release)
     if (wanted.thr_l, wanted.thr_h) == (before.thr_l, before.thr_h):
         print("already set, nothing written")
@@ -573,7 +603,10 @@ def main(argv=None):
     for name, func in (("get-key", cmd_get_key), ("set-key", cmd_set_key)):
         p = sub.add_parser(name, help=f"{name.split('-')[0]} one key's actuation point (close Synapse first)")
         p.add_argument("--key", default="Win", help="key name or fwID (default: Win)")
-        p.add_argument("--profile", choices=["0", "active"], default="0", help="0 = RAM (default), active = flash slot")
+        p.add_argument(
+            "--profile", choices=["0", "1", "2", "3", "4", "5", "6", "active"], default="0",
+            help="0 = RAM (default), 1-6 = that flash slot, active = the active flash slot",
+        )
         if name == "set-key":
             p.add_argument("--mm", type=float, required=True, help="new actuation point in mm")
             p.add_argument("--release-mm", type=float, help="new release point in mm (default: keep, or pull below --mm)")

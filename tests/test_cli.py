@@ -211,7 +211,7 @@ class CliScenarioTests(unittest.TestCase):
         code, out = self.run_cli(fake, ["set-key", "--mm", "2.7"])
         self.assertTrue(fake.writes)
         self.assertIn("before:", out)
-        self.assertIn("--mm 1.19 --release-mm 1.09", out)
+        self.assertIn("--profile 0 --mm 1.19 --release-mm 1.09", out)
         self.assertIn("may already have been applied", out)
         self.assertNotEqual(code, 0)
 
@@ -219,6 +219,38 @@ class CliScenarioTests(unittest.TestCase):
         fake = FakeHid(pid=0x02E6, mode=0)
         code, _ = self.run_cli(fake, ["set-key", "--mm", "3.5"])
         self.assertIn("0.1..2.8", str(code))
+        self.assertEqual(fake.writes, [])
+
+    def test_out_of_range_is_refused_not_clamped(self):
+        for argv in (["set-key", "--mm", "5.0"], ["set-key", "--mm", "1e308"], ["set-key", "--mm", "2", "--release-mm", "1e308"]):
+            fake = FakeHid(mode=0)
+            code, _ = self.run_cli(fake, argv)
+            self.assertIsInstance(code, str, argv)
+            self.assertEqual(fake.writes, [], argv)
+
+    def test_v2_release_floor_message(self):
+        fake = FakeHid(pid=0x0266, mode=0)
+        code, _ = self.run_cli(fake, ["set-key", "--mm", "2.0", "--release-mm", "1.5"])
+        self.assertIn("cannot be shallower than 1.55", str(code))
+
+    def test_restore_command_round_trips_on_v2(self):
+        for thr in range(256):
+            self.assertEqual(rs.V2.mm_to_threshold(float(rs.mm_exact(rs.V2, thr))), thr)
+            self.assertEqual(rs.V3.mm_to_threshold(float(rs.mm_exact(rs.V3, thr))) if thr else 1, thr if thr else 1)
+
+    def test_slot_profile_is_explicit(self):
+        fake = FakeHid(mode=0)
+        code, out = self.run_cli(fake, ["set-key", "--mm", "2.7", "--profile", "2", "--yes"])
+        self.assertEqual(code, 0, out)
+        self.assertEqual(fake.writes[0][0], 2)
+        self.assertIn("--profile 2 ", out)
+
+    def test_unrestorable_original_asks(self):
+        fake = FakeHid(mode=0)
+        fake.store[(0, 127)] = [0, 127, 0, 76, 75, 2, 2, 0, 4]  # 1 unit apart: outside the release gap
+        code, out = self.run_cli(fake, ["set-key", "--mm", "2.0"], answers=["n"])
+        self.assertIn("outside this tool's range", out)
+        self.assertEqual(code, "aborted, nothing written")
         self.assertEqual(fake.writes, [])
 
     def test_nan_rejected(self):

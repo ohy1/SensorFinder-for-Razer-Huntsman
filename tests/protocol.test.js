@@ -310,3 +310,26 @@ test('clearing while a key is held does not judge the rest of that touch', () =>
   t.update([], 40);
   assert.equal(t.events[1].fired, false);
 });
+
+test('a key released after a reset is judged again on its next touch', () => {
+  const t = new P.DepthTracker();
+  t.setThresholds([[127, { press: 100, release: 90 }]]);
+  t.update([{ id: 127, raw: 50 }], 0);
+  t.reset();
+  t.update([], 10); // released: no touch was open after the reset
+  assert.equal(t.carried.size, 0);
+  t.update([{ id: 127, raw: 40 }], 20);
+  t.update([], 30);
+  assert.equal(t.events[0].fired, false);
+});
+
+test('an input on a key held through a reset has no made-up time to input', () => {
+  const t = new P.DepthTracker();
+  t.setThresholds([[127, { press: 100, release: 90 }]]);
+  t.update([{ id: 127, raw: 150 }], 0);
+  t.reset();
+  t.update([{ id: 127, raw: 150 }], 10);
+  t.update([], 20);
+  assert.equal(t.events[0].fired, true);
+  assert.equal(t.events[0].firstOnMs, null);
+});

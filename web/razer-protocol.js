@@ -242,6 +242,8 @@
       this.lastT = t;
       const current = new Map();
       for (const { id, raw } of keys) if (raw > this.noiseFloor) current.set(id, raw);
+      // A key held through a reset that has since been released starts fresh next time.
+      for (const id of [...this.carried]) if (!current.has(id) && !this.open.has(id)) this.carried.delete(id);
       const ids = new Set([...current.keys(), ...this.open.keys(), ...this.active.keys()]);
       const ended = [];
       for (const id of ids) {
@@ -269,6 +271,7 @@
         this._close(id, t, true);
       }
       this.live.clear();
+      this.carried.clear();
     }
 
     _touch(id, raw, t) {
@@ -283,8 +286,9 @@
       let o = this.open.get(id);
       if (!o) {
         // Judged only if the points were known from the start of the touch and its start was seen.
-        const judged = this.thresholds.has(id) && !this.carried.has(id);
-        o = { id, start: t, peak: 0, activations: 0, firstOnMs: null, heldMs: 0, judged };
+        const carried = this.carried.has(id);
+        const judged = this.thresholds.has(id) && !carried;
+        o = { id, start: t, peak: 0, activations: 0, firstOnMs: null, heldMs: 0, judged, carried };
         this.open.set(id, o);
         s.touches++;
         if (judged) s.judgedTouches++;
@@ -306,7 +310,8 @@
         this.stats.get(id).activations++;
         const o = this.open.get(id);
         o.activations++;
-        if (o.firstOnMs === null) o.firstOnMs = t - o.start;
+        // For a touch whose start was not seen the time to input is unknown.
+        if (o.firstOnMs === null && !o.carried) o.firstOnMs = t - o.start;
         this._spans(id).push([t, null]);
       } else if (since !== undefined && raw <= thr.release) {
         this._endInput(id, t);
