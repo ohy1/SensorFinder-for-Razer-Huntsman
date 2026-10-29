@@ -4,6 +4,8 @@ Razer Huntsman 아날로그(광학) 키보드에서 **어느 키의 센서가 �
 호환 키캡을 끼운 뒤 키보드가 미세한 입력을 잡을 때 원인 키를 찾는 용도로 만들었습니다.
 Synapse가 설정 대상에서 빼놓은 키(**윈도우 키** 등)의 입력 지점(액추에이션)을 직접 읽고 바꾸는 기능도 들어 있습니다.
 
+**바로 열기: <https://ohy1.github.io/razer-sensorfinder/>** (데스크톱 Chrome / Edge)
+
 > 비공식 도구입니다. Razer와 관계없고, 리버스 엔지니어링으로 공개된 프로토콜을 사용합니다. 사용에 따른 책임은 사용자에게 있습니다.
 
 ## 지원 모델
@@ -19,7 +21,7 @@ Synapse가 설정 대상에서 빼놓은 키(**윈도우 키** 등)의 입력 �
 ### 실행
 
 1. **Razer Synapse를 실행해 둡니다** (트레이에 있어도 됩니다). Synapse가 켜져 있으면 키보드가 "드라이버 모드"로 동작하며 키별 깊이 데이터를 PC로 보냅니다. 이 도구는 그 데이터를 함께 읽습니다.
-2. 데스크톱 **Chrome** 또는 **Edge**에서 `web/index.html`을 엽니다. 저장소를 내려받아 파일을 더블클릭해도 되고, GitHub Pages로 호스팅해도 됩니다.
+2. 데스크톱 **Chrome** 또는 **Edge**에서 <https://ohy1.github.io/razer-sensorfinder/>를 엽니다. 저장소를 내려받아 `web/index.html`을 더블클릭해도 됩니다.
 3. **키보드 연결**을 누르고 목록에서 키보드를 선택합니다.
 
 ### 원인 키 찾는 순서
@@ -112,6 +114,14 @@ python python/razer_sensorfinder.py set-key --key Win --mm 3.0 --profile active
 - **fwID**는 AT-101 위치 코드입니다. 예: Q = 17, A = 31, Space = 61, Win = 127, Fn = 59, 한자 = 152, 한/영 = 153.
 
 ## 개발
+
+### GitHub Pages 배포
+
+`.github/workflows/pages.yml`은 모든 push에서 테스트를 돌립니다. 기본 브랜치에 push되면 `web/` 폴더를 GitHub Pages에 배포합니다.
+처음 한 번은 저장소 **Settings → Pages → Build and deployment → Source**를 **GitHub Actions**로 바꿔야 합니다.
+비공개 저장소에서 Pages를 쓰려면 GitHub Pro 이상이 필요합니다. 무료 계정이면 저장소를 공개로 바꿔야 합니다.
+
+### 테스트
 
 ```bash
 node --test tests/
