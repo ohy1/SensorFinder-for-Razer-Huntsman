@@ -262,6 +262,7 @@ const state = {
   ramEdited: false,    // a RAM write changed the monitor's points; RAM reverts on replug
   thrPartial: false,   // the loaded points miss keys that could not be read
   multiUnit: false,    // two keyboards of the same model are attached at once
+  foreignBefore: {},   // per model: saved Undo/points up to this time belong to a unit picked away from
 };
 
 const CHART_MS = 5000;
@@ -589,6 +590,7 @@ function patchSavedThreshold(profile, key, v) {
   try {
     const saved = JSON.parse(localStorage.getItem(thresholdStoreKey()) || 'null');
     if (!saved || saved.profile !== profile || !saved.keys || typeof saved.keys !== 'object' || Array.isArray(saved.keys)) return;
+    if ((Number(saved.savedAt) || 0) <= foreignCutoff()) return; // another unit's set
     if (v.thrL > 0) saved.keys[key] = [v.thrL, v.thrH];
     else delete saved.keys[key];
     localStorage.setItem(thresholdStoreKey(), JSON.stringify(saved));
@@ -616,11 +618,12 @@ function setRamWritten(on) {
 function ramReverted() {
   setRamWritten(false);
   if (!state.ramEdited) return;
-  state.thresholds = new Map();
-  applyThresholds(state.thresholds);
-  state.thrMsg = ['thrNotLoaded', null, []];
-  renderThrStatus();
-  restoreThresholds();
+  state.ramEdited = false;
+  // In one step, so only the keys whose points really change lose their verdicts.
+  if (!restoreThresholds()) {
+    applyThresholds(new Map());
+    thrStatus('thrNotLoaded');
+  }
 }
 
 /** Synapse started or quit, and may have re-applied its profile over RAM edits. */
@@ -634,24 +637,38 @@ function hasSavedThresholds() {
   try { return !!localStorage.getItem(thresholdStoreKey()); } catch (err) { return false; }
 }
 
-function restoreThresholds() {
+/** Saved records of this model from before this time belong to a unit picked away from (-1: none). */
+function foreignCutoff() {
+  return state.foreignBefore[state.productId] || -1;
+}
+
+/** The saved points for this model as {map, profile, when}, or null. */
+function savedThresholds() {
   try {
     const saved = JSON.parse(localStorage.getItem(thresholdStoreKey()) || 'null');
-    if (!saved || typeof saved.keys !== 'object' || !saved.keys) return;
+    if (!saved || typeof saved.keys !== 'object' || !saved.keys) return null;
+    const when = Number(saved.savedAt) || 0;
+    if (when <= foreignCutoff()) return null; // saved for the unit picked away from
     const ok = (t) => Number.isInteger(t) && t >= 0 && t <= 255;
     // The storage is shared with other pages on this origin: take only well-formed entries.
     const map = new Map(Object.entries(saved.keys)
       .filter(([id, v]) => P.KEY_NAMES[Number(id)] && Array.isArray(v) && ok(v[0]) && ok(v[1]) && v[0] > 0)
       .map(([id, [thrL, thrH]]) => [Number(id), { thrL, thrH }]));
-    if (!map.size) return;
-    applyThresholds(map);
-    state.thrPartial = false;
-    state.ramEdited = false;
-    state.thrProfile = Number.isInteger(saved.profile) ? saved.profile : 0;
-    const when = Number(saved.savedAt) || 0;
-    thrStatus('thrCached', () => ({ p: state.thrProfile, date: new Date(when).toLocaleString(I18N.locale()) }),
-      ramWritten() ? [['thrRamWritten', null]] : []);
-  } catch (err) { /* ignore unreadable cache */ }
+    return map.size ? { map, profile: Number.isInteger(saved.profile) ? saved.profile : 0, when } : null;
+  } catch (err) { return null; } // unreadable cache
+}
+
+/** Uses the saved points, if any; returns whether there were some. */
+function restoreThresholds() {
+  const saved = savedThresholds();
+  if (!saved) return false;
+  applyThresholds(saved.map);
+  state.thrPartial = false;
+  state.ramEdited = false;
+  state.thrProfile = saved.profile;
+  thrStatus('thrCached', () => ({ p: saved.profile, date: new Date(saved.when).toLocaleString(I18N.locale()) }),
+    ramWritten() ? [['thrRamWritten', null]] : []);
+  return true;
 }
 
 async function loadThresholds() {
@@ -734,7 +751,7 @@ function onInputReport(e) {
   const family = state.family || P.familyOf(state.productId, e.reportId);
   state.rawLog.push(`#${e.reportId.toString(16).padStart(2, '0')}  ${P.hex(bytes)}`);
   if (state.rawLog.length > 20) state.rawLog.shift();
-  if (!family) state.unrecognized++;
+  if (!family && ++state.unrecognized === 1 && !$('noStream').classList.contains('hidden')) renderNoStream();
   if (!family || e.reportId !== P.FAMILIES[family].depthReportId) { state.dirty = true; return; }
   if (state.family !== family) {
     // Unknown model: the family was just learned from its depth report; points in device units
@@ -887,13 +904,24 @@ async function attachNow(devices, user) {
     if (user) throw new Error(tr('errBusySwitch'));
     return;
   }
-  // Another unit of the same model: nothing recorded for the previous one applies to it.
-  const otherUnit = switching && pid === state.productId;
-  if (switching) {
+  // Every read, write, Undo and loaded point went through state.control: a pick without it is
+  // another unit of this model, and nothing recorded for the previous one applies to it.
+  const otherUnit = switching && pid === state.productId && !group.includes(state.control);
+  if (switching && (otherUnit || pid !== state.productId)) {
     releaseDevices(opened);
     state.productId = pid;
     resetBoardState();
-    if (otherUnit) setRamWritten(false); // that RAM write was on the other unit
+    if (otherUnit) {
+      setRamWritten(false); // that RAM write was on the other unit
+      state.foreignBefore[pid] = Date.now(); // and so are the saved Undo and points so far
+    }
+  } else if (switching) {
+    // The keyboard in use, picked out of two attached units: let the other go, keep the state.
+    const control = state.control;
+    releaseDevices(opened);
+    state.control = control;
+    if (state.undo && state.undo.device && !group.includes(state.undo.device)) state.undo = { ...state.undo, device: null };
+    if (state.lastRead && !group.includes(state.lastRead.device)) state.lastRead = null;
   } else if (state.lostDevice) {
     ramReverted(); // replugged: RAM went back to the active profile
   }
@@ -913,8 +941,8 @@ async function attachNow(devices, user) {
   $('dot').classList.toggle('on', state.devices.length > 0);
   $('connectError').classList.add('hidden');
   fillActuationRange();
-  if (!otherUnit && !state.thresholds.size) restoreThresholds();
-  if (!otherUnit && !state.undo) restoreUndo();
+  if (!state.thresholds.size) restoreThresholds();
+  if (!state.undo) restoreUndo();
   refreshButtons();
   setTimeout(() => { if (!state.streamSeen && state.devices.length) renderNoStream(); }, 3000);
 }
@@ -1258,6 +1286,7 @@ async function onWrite() {
         setUndo(null); // Undo must never point at an older write than the last one
       }
       sameBoard(pid);
+      if (profile === 0) setRamWritten(true); // before sending: RAM may change even if the read-back fails
       sent = true;
       await exchange(P.setKeyAssignmentPacket(wanted), device);
       const after = await readKey(profile, key, device);
@@ -1272,6 +1301,7 @@ async function onWrite() {
         a: mmOf(before.thrL), b: mmOf(after.thrL), c: mmOf(before.thrH), d: mmOf(after.thrH) }));
     } catch (err) {
       actLog(tr(sent ? 'writeUnconfirmed' : 'writeFail', { err: err.message || err }));
+      if (sent && state.thresholds.size) thrStatus('thrUnconfirmed');
     }
   });
 }
@@ -1310,7 +1340,8 @@ function restoreUndo() {
     const u = JSON.parse(localStorage.getItem(UNDO_KEY) || 'null');
     const byte = (v) => Number.isInteger(v) && v >= 0 && v <= 255;
     if (u && u.productId === state.productId && Number.isInteger(u.profile) && u.profile >= 0 && u.profile <= 6
-        && P.KEY_NAMES[u.key] && byte(u.thrL) && byte(u.thrH)) {
+        && P.KEY_NAMES[u.key] && byte(u.thrL) && byte(u.thrH)
+        && (Number(u.at) || 0) > foreignCutoff()) { // not made on the unit picked away from
       // No device: which keyboard it was made on is unknown now, so Undo asks before writing.
       state.undo = { productId: u.productId, profile: u.profile, key: u.key, thrL: u.thrL, thrH: u.thrH, pending: !!u.pending, device: null };
       if (byte(u.wroteL) && byte(u.wroteH)) Object.assign(state.undo, { wroteL: u.wroteL, wroteH: u.wroteH });
@@ -1346,9 +1377,17 @@ async function onUndo() {
       sameBoard(pid);
       const now = await readKey(u.profile, u.key);
       const device = state.control;
-      if (now.thrL !== u.thrL || now.thrH !== u.thrH) {
-        const f = fam();
-        const mmOf = (t) => f.thresholdToMm(t).toFixed(2);
+      const f = fam();
+      const mmOf = (t) => f.thresholdToMm(t).toFixed(2);
+      if (now.thrL === u.thrL && now.thrH === u.thrH) {
+        // Already the originals. Flash keeps a write across a reconnect, so on another connection
+        // this may be another unit of the model: the record is only dropped if the user says so.
+        if (u.device !== device && u.profile !== 0
+            && !confirm(tr('confirmUndoAlready', { key: keyName(u.key), a: mmOf(u.thrL), b: mmOf(u.thrH) }))) {
+          actLog(tr('undoKept', { key: keyName(u.key) }));
+          return;
+        }
+      } else {
         if (u.wroteL !== undefined && (now.thrL !== u.wroteL || now.thrH !== u.wroteH)) {
           // Not what this tool wrote: another keyboard of the same model, or changed since.
           if (!confirm(tr('confirmUndoChanged', { cur: `${mmOf(now.thrL)} / ${mmOf(now.thrH)}`, wrote: `${mmOf(u.wroteL)} / ${mmOf(u.wroteH)}` }))) return;
@@ -1358,6 +1397,7 @@ async function onUndo() {
           if (!confirm(tr('confirmUndoUnit', { when, key: keyName(u.key), a: mmOf(u.thrL), b: mmOf(u.thrH) }))) return;
         }
         sameBoard(pid);
+        if (u.profile === 0) setRamWritten(true);
         sent = true;
         await exchange(P.setKeyAssignmentPacket({ ...now, thrL: u.thrL, thrH: u.thrH }), device);
       }
@@ -1370,6 +1410,7 @@ async function onUndo() {
       if (ok && state.undo === u) setUndo(null);
     } catch (err) {
       actLog(tr(sent ? 'undoUnconfirmed' : 'undoFail', { err: err.message || err }));
+      if (sent && state.thresholds.size) thrStatus('thrUnconfirmed');
     }
   });
 }
@@ -1502,7 +1543,11 @@ function init() {
     const lr = state.lastRead;
     const thrL = lr && text === lr.mmL ? lr.thrL : f.mmToThreshold(mm);
     const thrH = Math.max(f.minRelease, Math.min(f.mmToRelease(mm - 0.2), thrL - f.minReleaseGap));
-    if (thrH <= thrL - f.minReleaseGap) $('actRelMm').value = P.mmExact(f, thrH);
+    if (thrH > thrL - f.minReleaseGap) return;
+    // The text Read filled in means "keep the value read": use a longer one for another value.
+    let out = P.mmExact(f, thrH);
+    if (lr && out === lr.mmH && thrH !== lr.thrH) out = P.mmExact(f, thrH, 2);
+    $('actRelMm').value = out;
   });
   $('actProfile').addEventListener('change', refreshButtons);
 

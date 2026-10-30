@@ -323,6 +323,26 @@ class CliScenarioTests(unittest.TestCase):
         self.assertIn("changed since it was read", str(code))
         self.assertEqual(fake.writes, [])
 
+    def test_negative_release_is_refused(self):
+        for pid in (0x02CF, 0x0266):
+            fake = FakeHid(pid=pid, mode=0)
+            code, _ = self.run_cli(fake, ["set-key", "--mm", "2.0", "--release-mm", "-0.1", "--yes"])
+            self.assertIn("cannot be shallower than", str(code), hex(pid))
+            self.assertEqual(fake.writes, [])
+        fake = FakeHid(mode=0)
+        code, out = self.run_cli(fake, ["set-key", "--mm", "2.0", "--release-mm", "0", "--yes"])
+        self.assertEqual(code, 0, out)  # exactly 0 is a valid V3 release
+        self.assertEqual(fake.writes[0][4], 0)
+
+    def test_gap_error_names_the_actuation_written(self):
+        code, _ = self.run_cli(FakeHid(mode=0), ["set-key", "--mm", "4.0", "--release-mm", "3.9", "--yes"])
+        self.assertIn("3.99 mm as written", str(code))
+
+    def test_halves_round_like_the_web_page(self):
+        self.assertEqual(rs.V2.mm_to_units(2.69), 144.5)
+        self.assertEqual(rs.V2.mm_to_threshold(2.69), 145)  # Math.round in the page gives 145 too
+        self.assertEqual(rs.V2.mm_to_release(2.69), 145)
+
     def test_nan_rejected(self):
         code, _ = self.run_cli(FakeHid(mode=0), ["set-key", "--mm", "2.0", "--release-mm", "nan"])
         self.assertIn("must be numbers", str(code))

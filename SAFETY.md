@@ -35,11 +35,11 @@ SensorFinder for Razer Huntsman은 Razer와 관계없는 **비공식** 도구입
 - **다른 응답 무시**: 다른 프로그램(Synapse)의 응답이 섞여도 프로필·키·레이어가 맞는 응답만 받습니다. 거절(`03`/`05`) 응답도 다른 키를 가리키면 그 키의 답으로 보지 않습니다.
 - **Synapse 경고**: 키보드가 드라이버 모드(Synapse 실행 중)이거나 모드를 알 수 없으면, 쓰기와 되돌리기 전에 확인 창을 띄웁니다.
 - **RAM 먼저**: 기본 대상은 RAM(프로필 0)입니다. 플래시 저장은 별도 확인을 거칩니다.
-- **결과를 확인하지 못한 쓰기**: 쓴 뒤 확인 읽기에 실패하면 "실패"가 아니라 "확인하지 못함"으로 알리고, 되돌리기를 남겨 둡니다.
+- **결과를 확인하지 못한 쓰기**: 쓴 뒤 확인 읽기에 실패하면 "실패"가 아니라 "확인하지 못함"으로 알리고, 되돌리기를 남겨 두며, 모니터 지점도 다시 불러오라고 안내합니다.
 
 웹 화면에만 있는 장치
 - **첫 사용 동의**: 쓰기와 되돌리기 모두 안전 확인 항목에 동의해야 합니다.
-- **되돌리기**: 마지막 쓰기 직전 값으로 정확히 복원합니다(Synapse가 쓴 0/0 "PC가 판정" 값도 그대로 복원하므로, 이 경우에만 위 범위 검사의 예외입니다). 새로고침이나 키보드 재연결 뒤에도 같은 모델이면 남아 있지만, 그 뒤에는 같은 키보드인지 알 수 없으므로 쓰기 전에 한 번 더 묻습니다. 키의 현재 값이 이 도구가 썼던 값과 다르면(다른 키보드이거나 그 사이 바뀐 경우)에도 묻습니다. 연결된 상태에서 **키보드 연결**로 다른 키보드를 고르면 이전 키보드의 되돌리기와 지점은 넘어가지 않습니다. 원래 값이 이 도구의 범위 밖이라 되돌릴 수 없으면 쓰기 전에 미리 알리고, 이전 되돌리기 기록은 지웁니다.
+- **되돌리기**: 마지막 쓰기 직전 값으로 정확히 복원합니다(Synapse가 쓴 0/0 "PC가 판정" 값도 그대로 복원하므로, 이 경우에만 위 범위 검사의 예외입니다). 새로고침이나 키보드 재연결 뒤에도 같은 모델이면 남아 있지만, 그 뒤에는 같은 키보드인지 알 수 없으므로 쓰기 전에 한 번 더 묻습니다. 키의 현재 값이 이 도구가 썼던 값과 다르면(다른 키보드이거나 그 사이 바뀐 경우)에도 묻습니다. 연결된 상태에서 **키보드 연결**로 다른 키보드를 고르면 이전 키보드의 되돌리기와 지점은 넘어가지 않고(그 뒤 다시 고르거나 재연결해도 마찬가지), 쓰던 키보드를 다시 고르면 그대로 남습니다. 재연결 뒤 플래시 키가 이미 원래 값이면 다른 키보드일 수 있으므로, 되돌리기 기록을 지울지 먼저 묻습니다. 원래 값이 이 도구의 범위 밖이라 되돌릴 수 없으면 쓰기 전에 미리 알리고, 이전 되돌리기 기록은 지웁니다.
 
 명령줄 도구(`set-key`)에는 동의 화면과 되돌리기 버튼이 없습니다. 대신 어떤 질문보다 먼저 원래 값과 **그대로 되돌리는 명령**(슬롯 번호와 정확한 값 포함)을 출력하고, 그 명령으로 되돌릴 수 없는 값(Synapse의 0/0 포함)이면 미리 묻습니다. 질문에 답하는 사이 키 값이 바뀌었으면 쓰지 않습니다. 모드를 읽지 못하거나 모르는 모드 값이 오면 Synapse 경고를 띄웁니다. `--yes`는 질문만 건너뛰고 경고는 계속 출력합니다.
 
@@ -106,11 +106,11 @@ The depth monitor only **reads** input reports the keyboard already sends.
 - **Other replies ignored**: when another program's (Synapse's) replies mix in, only a reply matching the profile, key and layer is accepted. A refusal (`03`/`05`) naming another key is not taken as this key's answer either.
 - **Synapse warning**: if the keyboard is in driver mode (Synapse running) or its mode cannot be read, a confirmation dialog appears before writing or undoing.
 - **RAM first**: the default target is RAM (profile 0); saving to flash asks again.
-- **Unconfirmed writes**: if the read-back after a write fails, it is reported as "could not confirm", not "failed", and Undo stays available.
+- **Unconfirmed writes**: if the read-back after a write fails, it is reported as "could not confirm", not "failed"; Undo stays available and the monitor asks you to load its points again.
 
 Web page only
 - **First-use consent**: required for writing and for Undo.
-- **Undo**: restores exactly the values the last write replaced (including Synapse's 0/0 "decided on the PC", the one exception to the range checks above); it survives a reload or replug for the same model, but after one it cannot tell whether it is the same keyboard, so it asks once more before writing. It also asks when the key no longer holds what this tool wrote (another keyboard, or changed since). Picking another keyboard with **Connect keyboard** while one is connected does not carry the previous keyboard's Undo or points over. If the original values are outside this tool's range, so Undo could not write them back, you are told before writing and the older Undo record is cleared.
+- **Undo**: restores exactly the values the last write replaced (including Synapse's 0/0 "decided on the PC", the one exception to the range checks above); it survives a reload or replug for the same model, but after one it cannot tell whether it is the same keyboard, so it asks once more before writing. It also asks when the key no longer holds what this tool wrote (another keyboard, or changed since). Picking another keyboard with **Connect keyboard** while one is connected does not carry the previous keyboard's Undo or points over (nor does picking or replugging it again later); picking the keyboard in use keeps them. If after a reconnect a flash key already holds the original values, it may be another keyboard, so you are asked before the Undo record is deleted. If the original values are outside this tool's range, so Undo could not write them back, you are told before writing and the older Undo record is cleared.
 
 The command-line `set-key` has no consent screen or Undo button. Instead, before asking anything, it prints the original values and a **ready-to-run restore command** (explicit slot number, exact values), and asks first if that command could not restore them (Synapse's 0/0 included). If the key changes while you answer, nothing is written. It also warns when the mode cannot be read or is a value it does not know. `--yes` skips the questions only; the warnings are still printed.
 

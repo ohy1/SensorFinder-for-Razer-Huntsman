@@ -30,7 +30,8 @@
       thresholdToMm: (t) => 1.5 + (t / 255) * 2.1,
       mmToUnits: (mm) => ((mm - 1.5) / 2.1) * 255, // unrounded, unclamped threshold units
       mmToThreshold: (mm) => clamp(Math.round(((mm - 1.5) / 2.1) * 255), 0, 255),
-      mmToRelease: (mm) => (mm <= 0 ? 0 : clamp(Math.round(((mm - 1.5) / 2.1) * 255), 0, 255)),
+      // -1 for a negative value, which no check accepts.
+      mmToRelease: (mm) => (mm < 0 ? -1 : clamp(Math.round(((mm - 1.5) / 2.1) * 255), 0, 255)),
       thresholdToRaw: (t) => t, // depth and thresholds share one byte scale
       mmToRaw: (mm) => ((mm - 1.5) / 2.1) * 255,
       gridMm: [1.5, 2, 2.5, 3, 3.5],
@@ -48,7 +49,8 @@
       mmToUnits: (mm) => (mm * 16380) / 256,
       mmToThreshold: (mm) => clamp(Math.round((mm * 16380) / 256), 1, 255),
       // A release of 0 is valid (the input ends only at rest); actuation 0 would mean "always on".
-      mmToRelease: (mm) => (mm <= 0 ? 0 : clamp(Math.round((mm * 16380) / 256), 0, 255)),
+      // -1 for a negative value, which no check accepts.
+      mmToRelease: (mm) => (mm < 0 ? -1 : clamp(Math.round((mm * 16380) / 256), 0, 255)),
       thresholdToRaw: (t) => t * 256, // threshold is the high byte of the u16 depth
       mmToRaw: (mm) => mm * 16380,
       gridMm: [0, 1, 2, 3, 4],
@@ -233,7 +235,8 @@
       // Keys held right now continue after the reset, but their start was not seen: they must
       // not be judged as "not registered". An input that is on stays on, as it does in the
       // firmware, without counting as a new activation.
-      this.carried = new Set(this.live ? this.live.keys() : []);
+      // Keys carried by an earlier reset that have not reported since are still held.
+      this.carried = new Set([...(this.live ? this.live.keys() : []), ...(this.carried || [])]);
       const on = this.active ? [...this.active.keys()].filter((id) => this.carried.has(id)) : [];
       this.carriedOn = new Set(on);
       this.live = new Map(); // id -> raw

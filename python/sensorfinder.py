@@ -52,16 +52,19 @@ class Family:
         u = self.mm_to_units(mm)
         if not math.isfinite(u):  # huge input overflows; it is clamped below like any other
             u = 255 if u > 0 else 0
-        t = round(u)
+        t = math.floor(u + 0.5)  # halves round up, as in the web page (Math.round)
         # V2 accepts 0; on V3 threshold 0 would mean "pressed at rest".
         return max(0 if self.entry_size == 2 else 1, min(255, t))
 
     def mm_to_release(self, mm: float) -> int:
-        """Release threshold: like mm_to_threshold, but 0 stays possible on V3 (released only at rest)."""
-        if mm <= 0:
-            return 0
+        """Release threshold: like mm_to_threshold, but 0 stays possible on V3 (released only at rest).
+
+        -1 for a negative value, which no check accepts.
+        """
+        if mm < 0:
+            return -1
         u = self.mm_to_units(mm)
-        return 255 if not math.isfinite(u) else max(0, min(255, round(u)))
+        return 255 if not math.isfinite(u) else max(0, min(255, math.floor(u + 0.5)))
 
 
 # V2: report 07, [fwID, depth:u8], 0..255 = 1.5..3.6 mm; the firmware clamps actuation to 15..250
@@ -572,7 +575,10 @@ def cmd_set_key(args):
             floor = mm_exact(family, family.min_release)
             raise SystemExit(f"--release-mm cannot be shallower than {floor} mm on the {name} (firmware limit)")
         if thr_h > thr_l - family.min_release_gap:
-            raise SystemExit("--release-mm must be at least 0.1 mm shallower than --mm")
+            raise SystemExit(
+                f"--release-mm must be at least 0.1 mm shallower than --mm "
+                f"({family.threshold_to_mm(thr_l):.2f} mm as written)"
+            )
 
     before = ctl.read_key(profile, key)
     # Shown before anything is asked or written, so the original values are known whatever happens.

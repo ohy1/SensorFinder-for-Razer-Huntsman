@@ -380,5 +380,21 @@ test('mm text for a threshold never sits on a rounding tie; V3 release may be 0'
   }
   assert.equal(v3.mmToRelease(0.005), 0);
   assert.equal(v3.mmToThreshold(0.005), 1);
-  assert.equal(v3.mmToRelease(-1), 0);
+  assert.equal(v3.mmToRelease(0), 0);
+  assert.equal(v3.mmToRelease(-1), -1); // refused by every check, never written as 0
+  assert.equal(v2.mmToRelease(-0.1), -1);
+});
+
+test('a second Clear before the next report keeps a held key carried and its input on', () => {
+  const t = new P.DepthTracker();
+  t.setThresholds([[31, { press: 100, release: 90 }]]);
+  t.update([{ id: 31, raw: 150 }], 0); // input on, then held still: no further reports
+  t.reset();
+  t.reset(); // e.g. a double click on Clear
+  assert.ok(t.carried.has(31));
+  assert.ok(t.active.has(31));
+  t.update([{ id: 31, raw: 95 }], 10); // back into the band: still on
+  t.update([], 20);
+  assert.equal(t.events[0].fired, true);
+  assert.equal(t.stats.get(31).activations, 0); // no made-up new input
 });
