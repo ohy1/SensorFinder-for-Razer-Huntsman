@@ -263,6 +263,7 @@ const state = {
   thrPartial: false,   // the loaded points miss keys that could not be read
   multiUnit: false,    // two keyboards of the same model are attached at once
   foreignBefore: {},   // per model: saved Undo/points up to this time belong to a unit picked away from
+  boundTo: null,       // control device the points, read or Undo were taken from on this page (null: unknown)
 };
 
 const CHART_MS = 5000;
@@ -614,9 +615,14 @@ function setRamWritten(on) {
   } catch (err) { /* only the reload hint is lost */ }
 }
 
-/** RAM went back to the active profile (replug): RAM edits in the monitor's points are void. */
+/** RAM went back to the active profile (every unit replugged): RAM edits are void. */
 function ramReverted() {
   setRamWritten(false);
+  dropRamEdits();
+}
+
+/** The monitor's RAM-edited points no longer match a connected keyboard: use the saved ones. */
+function dropRamEdits() {
   if (!state.ramEdited) return;
   state.ramEdited = false;
   // In one step, so only the keys whose points really change lose their verdicts.
@@ -634,7 +640,7 @@ function modeChanged() {
 }
 
 function hasSavedThresholds() {
-  try { return !!localStorage.getItem(thresholdStoreKey()); } catch (err) { return false; }
+  return savedThresholds() !== null; // a set hidden as another unit's does not count
 }
 
 /** Saved records of this model from before this time belong to a unit picked away from (-1: none). */
@@ -718,6 +724,7 @@ async function loadThresholds() {
         throw new Error(tr('errNoneRead', { n: failed || refused, err: lastErr ? lastErr.message || lastErr : '-' }));
       }
       applyThresholds(map);
+      state.boundTo = state.control;
       state.thrProfile = profile;
       state.thrPartial = failed > 0;
       // RAM read after a RAM write this session holds values that revert on replug: use, never save.
@@ -835,6 +842,7 @@ function resetBoardState() {
   state.thrMsg = ['thrNotLoaded', null, []];
   state.undo = null;
   state.lastRead = null;
+  state.boundTo = null;
   state.mode = null;
   state.streamSeen = false;
   state.unrecognized = 0;
@@ -904,26 +912,26 @@ async function attachNow(devices, user) {
     if (user) throw new Error(tr('errBusySwitch'));
     return;
   }
-  // Every read, write, Undo and loaded point went through state.control: a pick without it is
-  // another unit of this model, and nothing recorded for the previous one applies to it.
-  const otherUnit = switching && pid === state.productId && !group.includes(state.control);
+  // Another unit for certain: the keyboard this page's points, read or Undo came from is still
+  // attached and was not picked. Nothing recorded for it applies to the pick.
+  const bound = state.boundTo;
+  const otherUnit = switching && pid === state.productId && !!bound && state.devices.includes(bound) && !group.includes(bound);
+  const replug = !switching && state.lostDevice;
   if (switching && (otherUnit || pid !== state.productId)) {
     releaseDevices(opened);
     state.productId = pid;
     resetBoardState();
-    if (otherUnit) {
-      setRamWritten(false); // that RAM write was on the other unit
-      state.foreignBefore[pid] = Date.now(); // and so are the saved Undo and points so far
-    }
+    // Its saved Undo and points stay hidden for this model. The RAM-write flag stays: which unit
+    // holds that RAM edit is unknown, and only a replug of every unit reverts it.
+    if (otherUnit) state.foreignBefore[pid] = Date.now();
   } else if (switching) {
-    // The keyboard in use, picked out of two attached units: let the other go, keep the state.
-    const control = state.control;
+    // One of the attached units, not known to be another one: let the rest go and keep the
+    // state; whatever is not bound to the picked unit asks before writing.
     releaseDevices(opened);
-    state.control = control;
     if (state.undo && state.undo.device && !group.includes(state.undo.device)) state.undo = { ...state.undo, device: null };
     if (state.lastRead && !group.includes(state.lastRead.device)) state.lastRead = null;
-  } else if (state.lostDevice) {
-    ramReverted(); // replugged: RAM went back to the active profile
+  } else if (replug) {
+    ramReverted(); // RAM went back to the active profile
   }
   for (const d of opened) {
     if (state.devices.includes(d)) continue;
@@ -935,6 +943,7 @@ async function attachNow(devices, user) {
   // The chooser returns one physical keyboard; automatic attaches may see two of one model.
   state.multiUnit = !user && hasDuplicateUnits(state.devices);
   if (!state.devices.includes(state.control)) state.control = state.devices.find(hasControlCollection) || null;
+  if (replug && state.boundTo) state.boundTo = state.control; // a replug is taken as the same keyboard
   state.lostDevice = false;
   renderDevName();
   renderModeHint();
@@ -967,6 +976,11 @@ function onDisconnect(e) {
   if (state.control === e.device) state.control = null;
   if (state.lastRead && state.lastRead.device === e.device) state.lastRead = null; // read again after a replug
   state.multiUnit = state.multiUnit && hasDuplicateUnits(state.devices);
+  if (e.device === state.boundTo && state.devices.some(hasControlCollection)) {
+    // The keyboard the points came from left while another unit of the model stays.
+    dropRamEdits();
+    if (state.thresholds.size) thrStatus('thrUnitGone');
+  }
   if (!state.devices.length) {
     // Keep the keyboard's identity, points and Undo for a replug; end what was live.
     state.lostDevice = true;
@@ -1163,6 +1177,7 @@ async function onRead() {
       // Remember the exact values so an untouched field writes back what was read, not a rounded value.
       state.lastRead = { productId: state.productId, device: state.control, key, sel, profile,
         thrL: currentAssignment.thrL, thrH: currentAssignment.thrH, mmL, mmH };
+      state.boundTo = state.control;
       actLog(tr('readOk', { key: keyName(key), p: profile }));
     } catch (err) {
       actLog(tr('readFail', { err: err.message || err }));
@@ -1377,6 +1392,7 @@ async function onUndo() {
       sameBoard(pid);
       const now = await readKey(u.profile, u.key);
       const device = state.control;
+      state.boundTo = device;
       const f = fam();
       const mmOf = (t) => f.thresholdToMm(t).toFixed(2);
       if (now.thrL === u.thrL && now.thrH === u.thrH) {

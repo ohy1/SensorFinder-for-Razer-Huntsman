@@ -315,6 +315,20 @@ def find_keyboard(hid):
     return infos[0]["product_id"], [d for d in infos if d["product_id"] == infos[0]["product_id"]]
 
 
+def unit_count(interfaces) -> int:
+    """How many keyboards of one model these interfaces belong to (hidapi cannot tell them apart).
+
+    Each unit lists every control-interface collection once, so a collection seen twice means two.
+    """
+    seen: dict = {}
+    for d in interfaces:
+        if d.get("interface_number") == 3:
+            k = (d.get("usage_page"), d.get("usage"))
+            seen[k] = seen.get(k, 0) + 1
+    serials = {d.get("serial_number") for d in interfaces if d.get("serial_number")}
+    return max(max(seen.values(), default=0), len(serials))
+
+
 def open_path(hid, path):
     dev = hid.device()
     dev.open_path(path)
@@ -423,6 +437,8 @@ def cmd_monitor(args):
     hid = _hid()
     pid, interfaces = find_keyboard(hid)
     name, family, _ = MODELS[pid]
+    if unit_count(interfaces) > 1:
+        print(f"note: two or more Razer {name} keyboards are connected; their touches are shown together")
     readers = []
     seen_paths = set()
     for info in interfaces:
@@ -485,10 +501,17 @@ def cmd_monitor(args):
         print(f"  {key_name(fw_id):<10} touches {tracker.touches[fw_id]:4}  peak {peak} (~{family.raw_to_mm(peak):.2f} mm)")
 
 
-def _control(args):
+def _control(args, write=False):
     hid = _hid()
     pid, interfaces = find_keyboard(hid)
     name, family, _ = MODELS[pid]
+    if unit_count(interfaces) > 1:
+        if write:
+            raise SystemExit(
+                f"two or more Razer {name} keyboards are connected and set-key cannot tell them apart: "
+                "unplug the ones you do not want to change"
+            )
+        print(f"note: two or more Razer {name} keyboards are connected; this uses whichever is found first")
     rng = write_range(pid)
     ctl = Control(hid, interfaces, family, rng)
     profile = ctl.active_profile() if args.profile == "active" else int(args.profile)
@@ -558,7 +581,7 @@ def _restore_command(family: Family, a: KeyAssignment) -> str:
 
 
 def cmd_set_key(args):
-    name, family, rng, ctl, profile = _control(args)
+    name, family, rng, ctl, profile = _control(args, write=True)
     if not math.isfinite(args.mm) or (args.release_mm is not None and not math.isfinite(args.release_mm)):
         raise SystemExit("--mm and --release-mm must be numbers")
     # Out-of-range input must be refused, not clamped into range.
@@ -567,6 +590,8 @@ def cmd_set_key(args):
         lo_mm, hi_mm = mm_bound(family, rng, rng[0]), mm_bound(family, rng, rng[1])
         raise SystemExit(f"--mm must be within {lo_mm}..{hi_mm} for the {name}")
     key = key_id(args.key)
+    if key not in KEY_NAMES:
+        raise SystemExit(f"fwID {key} is not a key this tool writes (writes are limited to the known keys)")
     thr_h = None
     if args.release_mm is not None:
         # Checked after converting: the value written is what has to be valid.
@@ -576,8 +601,8 @@ def cmd_set_key(args):
             raise SystemExit(f"--release-mm cannot be shallower than {floor} mm on the {name} (firmware limit)")
         if thr_h > thr_l - family.min_release_gap:
             raise SystemExit(
-                f"--release-mm must be at least 0.1 mm shallower than --mm "
-                f"({family.threshold_to_mm(thr_l):.2f} mm as written)"
+                f"--release-mm must be about 0.1 mm or more shallower than --mm "
+                f"({family.threshold_to_mm(thr_l):.2f} mm as written; the firmware's minimum gap)"
             )
 
     before = ctl.read_key(profile, key)
@@ -614,6 +639,10 @@ def cmd_set_key(args):
     if (wanted.thr_l, wanted.thr_h) == (before.thr_l, before.thr_h):
         print("already set, nothing written")
         return
+    try:
+        check_packet(build_packet(0x02, 0x12, 80, wanted.to_args()), family, rng)
+    except SafetyError as e:  # refused here, before anything is sent
+        raise SystemExit(f"blocked by the safety policy: {e}; nothing written")
     try:
         ctl.write_key(wanted)
         after = ctl.read_key(profile, key)
