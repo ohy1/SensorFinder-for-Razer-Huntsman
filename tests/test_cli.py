@@ -392,7 +392,7 @@ class CliScenarioTests(unittest.TestCase):
             cmd = rs._restore_command(rs.V3, rs.KeyAssignment(1, 127, 0, 76, 70, 2, b""), 0x02CF)
         finally:
             sys.argv[0] = old
-        self.assertTrue(cmd.startswith("python python/sensorfinder.py set-key --pid 02CF"), cmd)
+        self.assertTrue(cmd.startswith(f"{sys.executable} python/sensorfinder.py set-key --pid 02CF"), cmd)
 
     def test_nan_rejected(self):
         code, _ = self.run_cli(FakeHid(mode=0), ["set-key", "--mm", "2.0", "--release-mm", "nan"])

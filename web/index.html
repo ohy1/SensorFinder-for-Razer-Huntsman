@@ -825,7 +825,9 @@ function releaseDevices(keep = []) {
   state.control = null;
   for (const d of old) {
     d.removeEventListener('inputreport', onInputReport);
-    if (!keep.includes(d)) d.close().catch(() => { /* already gone */ });
+    if (keep.includes(d)) continue;
+    releasedDevices.add(d);
+    d.close().catch(() => { /* already gone */ });
   }
 }
 
@@ -872,6 +874,7 @@ function hasDuplicateUnits(group) {
 }
 
 const seenDevices = new WeakSet(); // every HIDDevice this page has attached
+const releasedDevices = new Set(); // let go of by a keyboard pick but not unplugged since
 
 // One attach at a time, so a page-load or replug attach cannot overtake the user's pick.
 let attachChain = Promise.resolve();
@@ -935,13 +938,18 @@ async function attachNow(devices, user) {
       if (state.thresholds.size) thrStatus('thrOtherUnit');
     }
   } else if (replug) {
-    ramReverted(); // RAM went back to the active profile
-    // Taken as the same keyboard; its interfaces come back one by one, control maybe last.
-    state.thrRebind = state.thrDevice !== null;
+    const fromDevice = state.thrDevice !== null;
     state.thrDevice = null;
+    // RAM went back to the active profile on the keyboard that left. Another unit of this model
+    // that was let go of but is still plugged in may still hold a RAM edit: then keep the flag.
+    if ([...releasedDevices].some((d) => d.productId === pid)) dropRamEdits();
+    else ramReverted();
+    if (!user) state.thrRebind = fromDevice; // back by itself: taken as the same keyboard
+    else if (fromDevice && state.thresholds.size) thrStatus('thrOtherUnit'); // picked: may be another
   }
   for (const d of opened) {
     seenDevices.add(d);
+    releasedDevices.delete(d);
     if (state.devices.includes(d)) continue;
     d.addEventListener('inputreport', onInputReport);
     state.devices.push(d);
@@ -981,6 +989,7 @@ async function connect() {
 }
 
 function onDisconnect(e) {
+  releasedDevices.delete(e.device); // unplugged: its RAM went back
   if (!state.devices.includes(e.device)) return;
   e.device.removeEventListener('inputreport', onInputReport);
   state.devices = state.devices.filter((d) => d !== e.device);
@@ -1159,6 +1168,11 @@ function requireKnownModel() {
   return { family: P.FAMILIES[model.family], range: P.writeRange(state.productId) };
 }
 
+/** Whether two key assignments are the same (points and function). */
+function sameAssignment(a, b) {
+  return a.thrL === b.thrL && a.thrH === b.thrH && a.fnId === b.fnId && P.hex(a.fnData) === P.hex(b.fnData);
+}
+
 /** Throws if the keyboard changed (or went away) since `pid` was captured. */
 function sameBoard(pid) {
   if (!state.devices.length || state.productId !== pid) throw new Error(tr('errDeviceChanged'));
@@ -1289,26 +1303,36 @@ async function onWrite() {
         actLog(tr('writeSame', { key: keyName(key) }));
         return;
       }
+      const mmOf = (t) => f.thresholdToMm(t).toFixed(2);
+      let asked = false;
       // Undo must be able to put `before` back; warn now if the safety policy would refuse that.
       let undoable = true;
       try {
         P.checkPacket(P.setKeyAssignmentPacket(before), P.MODELS[pid].family, range);
       } catch (err) {
         undoable = false;
-        const mmOf = (t) => f.thresholdToMm(t).toFixed(2);
+        asked = true;
         if (!confirm(tr('confirmNoUndo', { a: mmOf(before.thrL), b: mmOf(before.thrH) }))) return;
+      }
+      // An earlier unconfirmed write to this key and slot on this device keeps the true original
+      // values. Any other unconfirmed write's Undo is only replaced after asking: it may have landed.
+      const prev = state.undo;
+      const carry = undoable && prev && prev.pending && prev.productId === pid && prev.profile === profile
+        && prev.key === key && prev.device === device;
+      if (prev && prev.pending && !carry) {
+        asked = true;
+        const pm = P.MODELS[prev.productId] ? P.FAMILIES[P.MODELS[prev.productId].family] : f;
+        const pmm = (t) => pm.thresholdToMm(t).toFixed(2);
+        const where = prev.profile === 0 ? tr('profRam') : tr('profSlot', { n: prev.profile });
+        if (!confirm(tr('confirmReplacePending', { key: keyName(prev.key), p: where, a: pmm(prev.thrL), b: pmm(prev.thrH) }))) return;
+      }
+      if (asked) {
+        // The questions took time: write only if the key still holds what was read before them.
+        const again = await readKey(profile, key, device);
+        if (!sameAssignment(again, before)) throw new Error(tr('errChangedSinceRead'));
       }
       if (undoable) {
         // Recorded before sending, so a write whose result cannot be confirmed can still be undone.
-        // An earlier unconfirmed write to this key on this device keeps the true original values.
-        // One made on another device may be another keyboard's: start from this one's, after asking.
-        const prev = state.undo;
-        const same = prev && prev.pending && prev.productId === pid && prev.profile === profile && prev.key === key;
-        const carry = same && prev.device === device;
-        if (same && !carry) {
-          const mmOf = (t) => f.thresholdToMm(t).toFixed(2);
-          if (!confirm(tr('confirmReplacePending', { key: keyName(key), a: mmOf(prev.thrL), b: mmOf(prev.thrH) }))) return;
-        }
         setUndo({ productId: pid, profile, key, thrL: carry ? prev.thrL : before.thrL, thrH: carry ? prev.thrH : before.thrH,
           wroteL: wanted.thrL, wroteH: wanted.thrH, pending: true, at: Date.now(), device });
       } else {
@@ -1325,7 +1349,6 @@ async function onWrite() {
       state.lastRead = null;
       const ok = after.thrL === wanted.thrL && after.thrH === wanted.thrH && after.fnId === before.fnId;
       updateMonitorPoints(profile, key, after);
-      const mmOf = (t) => f.thresholdToMm(t).toFixed(2);
       actLog(`${tr(ok ? 'writeOk' : 'writeMismatch')}: ` + tr('writeDetail', { key: keyName(key), p: profile,
         a: mmOf(before.thrL), b: mmOf(after.thrL), c: mmOf(before.thrH), d: mmOf(after.thrH) }));
     } catch (err) {
@@ -1416,13 +1439,21 @@ async function onUndo() {
           return;
         }
       } else {
+        let asked = false;
         if (u.wroteL !== undefined && (now.thrL !== u.wroteL || now.thrH !== u.wroteH)) {
           // Not what this tool wrote: another keyboard of the same model, or changed since.
+          asked = true;
           if (!confirm(tr('confirmUndoChanged', { cur: `${mmOf(now.thrL)} / ${mmOf(now.thrH)}`, wrote: `${mmOf(u.wroteL)} / ${mmOf(u.wroteH)}` }))) return;
         } else if (u.device !== device) {
           // Recorded before a reload or reconnect: the same value on another unit looks identical.
+          asked = true;
           const when = u.at ? new Date(u.at).toLocaleString(I18N.locale()) : '?';
           if (!confirm(tr('confirmUndoUnit', { when, key: keyName(u.key), a: mmOf(u.thrL), b: mmOf(u.thrH) }))) return;
+        }
+        if (asked) {
+          // The question took time: write only if the key still holds what was read before it.
+          const again = await readKey(u.profile, u.key, device);
+          if (!sameAssignment(again, now)) throw new Error(tr('errChangedSinceRead'));
         }
         sameBoard(pid);
         if (u.profile === 0) setRamWritten(true);
