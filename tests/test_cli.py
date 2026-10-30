@@ -386,13 +386,21 @@ class CliScenarioTests(unittest.TestCase):
 
     def test_restore_command_names_the_script_as_run(self):
         import sys
-        old = sys.argv[0]
+        old_argv, old_exe = sys.argv[0], sys.executable
+        cases = [
+            ("python/sensorfinder.py", "/usr/bin/python3", "python3 python/sensorfinder.py set-key --pid 02CF"),
+            ("python/sensorfinder.py", "/home/u/venv/bin/python", "python python/sensorfinder.py set-key --pid 02CF"),
+            (r"C:\My Tools\sensorfinder.py", r"C:\Program Files\Python312\python.exe",
+             r'python "C:\My Tools\sensorfinder.py" set-key --pid 02CF'),
+            ("sensorfinder.py", r"C:\Python312\python3.12.exe", "python3.12 sensorfinder.py set-key --pid 02CF"),
+        ]
         try:
-            sys.argv[0] = "python/sensorfinder.py"
-            cmd = rs._restore_command(rs.V3, rs.KeyAssignment(1, 127, 0, 76, 70, 2, b""), 0x02CF)
+            for argv0, exe, prefix in cases:
+                sys.argv[0], sys.executable = argv0, exe
+                cmd = rs._restore_command(rs.V3, rs.KeyAssignment(1, 127, 0, 76, 70, 2, b""), 0x02CF)
+                self.assertTrue(cmd.startswith(prefix), (exe, cmd))
         finally:
-            sys.argv[0] = old
-        self.assertTrue(cmd.startswith(f"{sys.executable} python/sensorfinder.py set-key --pid 02CF"), cmd)
+            sys.argv[0], sys.executable = old_argv, old_exe
 
     def test_nan_rejected(self):
         code, _ = self.run_cli(FakeHid(mode=0), ["set-key", "--mm", "2.0", "--release-mm", "nan"])

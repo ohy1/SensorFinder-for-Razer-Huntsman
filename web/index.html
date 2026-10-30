@@ -1201,7 +1201,8 @@ async function onRead() {
       $('actRelMm').value = mmH;
       // Remember the exact values so an untouched field writes back what was read, not a rounded value.
       state.lastRead = { productId: state.productId, device: state.control, key, sel, profile,
-        thrL: currentAssignment.thrL, thrH: currentAssignment.thrH, mmL, mmH };
+        thrL: currentAssignment.thrL, thrH: currentAssignment.thrH, fnId: currentAssignment.fnId,
+        fnData: currentAssignment.fnData, mmL, mmH };
       actLog(tr('readOk', { key: keyName(key), p: profile }));
     } catch (err) {
       actLog(tr('readFail', { err: err.message || err }));
@@ -1297,7 +1298,7 @@ async function onWrite() {
       sameBoard(pid);
       const before = await readKey(profile, key, device); // always start from the device's current value
       // The fields were filled from an earlier read; refuse if the key changed since then.
-      if (before.thrL !== lr.thrL || before.thrH !== lr.thrH) throw new Error(tr('errChangedSinceRead'));
+      if (!sameAssignment(before, lr)) throw new Error(tr('errChangedSinceRead')); // points or function
       const wanted = P.withActuation(before, thrL, thrH, f.minReleaseGap, f.minRelease);
       if (wanted.thrL === before.thrL && wanted.thrH === before.thrH) {
         actLog(tr('writeSame', { key: keyName(key) }));
@@ -1324,7 +1325,9 @@ async function onWrite() {
         const pm = P.MODELS[prev.productId] ? P.FAMILIES[P.MODELS[prev.productId].family] : f;
         const pmm = (t) => pm.thresholdToMm(t).toFixed(2);
         const where = prev.profile === 0 ? tr('profRam') : tr('profSlot', { n: prev.profile });
-        if (!confirm(tr('confirmReplacePending', { key: keyName(prev.key), p: where, a: pmm(prev.thrL), b: pmm(prev.thrH) }))) return;
+        // Without an Undo of its own, this write deletes the record rather than replacing it.
+        const q = undoable ? 'confirmReplacePending' : 'confirmDropPending';
+        if (!confirm(tr(q, { key: keyName(prev.key), p: where, a: pmm(prev.thrL), b: pmm(prev.thrH) }))) return;
       }
       if (asked) {
         // The questions took time: write only if the key still holds what was read before them.
@@ -1373,23 +1376,30 @@ function updateMonitorPoints(profile, key, after, written = true) {
   if (profile === 0 && written) state.ramEdited = true; // reverts on replug, so never saved
 }
 
+// One Undo record per keyboard model, so a write on one model never replaces another's.
+// (Earlier versions kept a single record for every model under UNDO_KEY; it is still read.)
 const UNDO_KEY = 'rsf.undo.v1';
+const undoKey = (pid) => `${UNDO_KEY}.${pid}`;
 
 function setUndo(u) {
   state.undo = u;
+  const pid = u ? u.productId : state.productId;
   try {
     if (u) {
       const { device, ...stored } = u; // a device lives only as long as this page
-      localStorage.setItem(UNDO_KEY, JSON.stringify(stored));
-    } else localStorage.removeItem(UNDO_KEY);
+      localStorage.setItem(undoKey(pid), JSON.stringify(stored));
+    } else localStorage.removeItem(undoKey(pid));
+    const legacy = JSON.parse(localStorage.getItem(UNDO_KEY) || 'null');
+    if (legacy && legacy.productId === pid) localStorage.removeItem(UNDO_KEY); // superseded
   } catch (err) { /* Undo just won't survive a reload */ }
   renderUndo();
 }
 
-/** Brings back the last Undo after a reload, for the same keyboard model only. */
+/** Brings back this model's last Undo after a reload or a switch between models. */
 function restoreUndo() {
   try {
-    const u = JSON.parse(localStorage.getItem(UNDO_KEY) || 'null');
+    const pid = state.productId;
+    const u = JSON.parse(localStorage.getItem(undoKey(pid)) || localStorage.getItem(UNDO_KEY) || 'null');
     const byte = (v) => Number.isInteger(v) && v >= 0 && v <= 255;
     if (u && u.productId === state.productId && Number.isInteger(u.profile) && u.profile >= 0 && u.profile <= 6
         && P.KEY_NAMES[u.key] && byte(u.thrL) && byte(u.thrH)) {
@@ -1472,6 +1482,8 @@ async function onUndo() {
     } catch (err) {
       actLog(tr(sent ? 'undoUnconfirmed' : 'undoFail', { err: err.message || err }));
       if (sent && state.thresholds.size) thrStatus('thrUnconfirmed');
+      // The Undo's own write may or may not have landed: keep it, as unconfirmed.
+      if (sent && state.undo === u) setUndo({ ...u, pending: true });
     }
   });
 }

@@ -586,17 +586,26 @@ def mm_in_range(family: Family, rng: tuple[int, int], mm: float) -> bool:
     return printed or rng[0] - 0.5 < units < rng[1] + 0.5
 
 
+def _interpreter_name() -> str:
+    """'python3' when run as python3 (where plain 'python' may not exist), else 'python'."""
+    name = (sys.executable or "").replace("\\", "/").rsplit("/", 1)[-1].lower()
+    if name.endswith(".exe"):
+        name = name[:-4]
+    return name if name.startswith("python") and name[6:].replace(".", "").isdigit() and name != "python" else "python"
+
+
 def _restore_command(family: Family, a: KeyAssignment, pid: int) -> str:
     if a.thr_l == 0 and a.thr_h == 0:
         return "(0/0 = decided by Synapse/host: this tool cannot write it back; re-apply the profile in Razer Synapse)"
     # The explicit model and slot number, so it restores the same slot even if the active one
     # changes or another model is plugged in; the script path as it was run, so it runs from here.
-    # The interpreter and script as they were run, so the line runs as printed.
-    quote = lambda x: f'"{x}"' if " " in x else x  # noqa: E731 - double quotes work in every shell
-    python = quote(sys.executable or "python")
-    script = quote(sys.argv[0] or "sensorfinder.py")
+    # The script path as it was run, so the line runs from the same directory. The interpreter is
+    # named, not given as a path: a quoted path first on the line breaks PowerShell and Git Bash.
+    script = sys.argv[0] or "sensorfinder.py"
+    if " " in script:
+        script = f'"{script}"'  # not the first word, so double quotes work in cmd, PowerShell and sh
     return (
-        f"{python} {script} set-key --pid {pid:04X} --key {a.key} --profile {a.profile} "
+        f"{_interpreter_name()} {script} set-key --pid {pid:04X} --key {a.key} --profile {a.profile} "
         f"--mm {mm_exact(family, a.thr_l)} --release-mm {mm_exact(family, a.thr_h)}"
     )
 
