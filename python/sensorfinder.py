@@ -590,9 +590,12 @@ def _restore_command(family: Family, a: KeyAssignment, pid: int) -> str:
     if a.thr_l == 0 and a.thr_h == 0:
         return "(0/0 = decided by Synapse/host: this tool cannot write it back; re-apply the profile in Razer Synapse)"
     # The explicit model and slot number, so it restores the same slot even if the active one
-    # changes or another model is plugged in.
+    # changes or another model is plugged in; the script path as it was run, so it runs from here.
+    script = sys.argv[0] or "sensorfinder.py"
+    if " " in script:
+        script = f'"{script}"'
     return (
-        f"python sensorfinder.py set-key --pid {pid:04X} --key {a.key} --profile {a.profile} "
+        f"python {script} set-key --pid {pid:04X} --key {a.key} --profile {a.profile} "
         f"--mm {mm_exact(family, a.thr_l)} --release-mm {mm_exact(family, a.thr_h)}"
     )
 

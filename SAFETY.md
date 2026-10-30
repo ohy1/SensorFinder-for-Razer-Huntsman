@@ -35,7 +35,7 @@ SensorFinder for Razer Huntsman은 Razer와 관계없는 **비공식** 도구입
 - **다른 응답 무시**: 다른 프로그램(Synapse)의 응답이 섞여도 프로필·키·레이어가 맞는 응답만 받습니다. 거절(`03`/`05`) 응답도 다른 키를 가리키면 그 키의 답으로 보지 않습니다.
 - **Synapse 경고**: 키보드가 드라이버 모드(Synapse 실행 중)이거나 모드를 알 수 없으면, 쓰기와 되돌리기 전에 확인 창을 띄웁니다.
 - **RAM 먼저**: 기본 대상은 RAM(프로필 0)입니다. 플래시 저장은 별도 확인을 거칩니다.
-- **결과를 확인하지 못한 쓰기**: 쓴 뒤 확인 읽기에 실패하면 "실패"가 아니라 "확인하지 못함"으로 알리고, 되돌리기를 남겨 두며, 모니터 지점도 다시 불러오라고 안내합니다.
+- **결과를 확인하지 못한 쓰기**: 쓴 뒤 확인 읽기에 실패하면 "실패"가 아니라 "확인하지 못함"으로 알리고, 되돌리기를 남겨 두며, 모니터 지점도 다시 불러오라고 안내합니다. 그 기록이 다른 장치나 이전 연결에서 만든 것인데 같은 키를 다시 쓰면, 기록을 바꾸기 전에 묻습니다.
 
 웹 화면에만 있는 장치
 - **첫 사용 동의**: 쓰기와 되돌리기 모두 안전 확인 항목에 동의해야 합니다.
@@ -107,7 +107,7 @@ The depth monitor only **reads** input reports the keyboard already sends.
 - **Other replies ignored**: when another program's (Synapse's) replies mix in, only a reply matching the profile, key and layer is accepted. A refusal (`03`/`05`) naming another key is not taken as this key's answer either.
 - **Synapse warning**: if the keyboard is in driver mode (Synapse running) or its mode cannot be read, a confirmation dialog appears before writing or undoing.
 - **RAM first**: the default target is RAM (profile 0); saving to flash asks again.
-- **Unconfirmed writes**: if the read-back after a write fails, it is reported as "could not confirm", not "failed"; Undo stays available and the monitor asks you to load its points again.
+- **Unconfirmed writes**: if the read-back after a write fails, it is reported as "could not confirm", not "failed"; Undo stays available and the monitor asks you to load its points again. If that record was made on another device or an earlier connection and you write the same key again, you are asked before the record is replaced.
 
 Web page only
 - **First-use consent**: required for writing and for Undo.

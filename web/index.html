@@ -871,6 +871,8 @@ function hasDuplicateUnits(group) {
   return false;
 }
 
+const seenDevices = new WeakSet(); // every HIDDevice this page has attached
+
 // One attach at a time, so a page-load or replug attach cannot overtake the user's pick.
 let attachChain = Promise.resolve();
 function attach(devices, user = false) {
@@ -914,13 +916,15 @@ async function attachNow(devices, user) {
     if (user) throw new Error(tr('errBusySwitch'));
     return;
   }
-  // A replug brings the keyboard back by itself; a pick in the chooser may be any unit.
-  const replug = !switching && state.lostDevice && !user;
+  // A replug brings the keyboard back by itself. A pick in the chooser after a loss counts as one
+  // too when this page never had those objects (a replugged or newly plugged keyboard: RAM was
+  // not written here since); a still-plugged unit picked again may still hold a RAM edit.
+  const replug = !switching && state.lostDevice && (!user || opened.every((d) => !seenDevices.has(d)));
   if (switching && pid !== state.productId) {
     releaseDevices(opened);
     state.productId = pid;
     resetBoardState();
-  } else if (switching || (user && state.lostDevice)) {
+  } else if (switching || (user && state.lostDevice && !replug)) {
     // A keyboard of this model picked. Units of one model cannot be told apart, so nothing is
     // dropped: Undo asks before writing on any device but the one it wrote to, and points read
     // from another device are marked. The RAM-write flag stays (that unit's RAM may still hold it).
@@ -937,6 +941,7 @@ async function attachNow(devices, user) {
     state.thrDevice = null;
   }
   for (const d of opened) {
+    seenDevices.add(d);
     if (state.devices.includes(d)) continue;
     d.addEventListener('inputreport', onInputReport);
     state.devices.push(d);
@@ -1295,13 +1300,17 @@ async function onWrite() {
       }
       if (undoable) {
         // Recorded before sending, so a write whose result cannot be confirmed can still be undone.
-        // An earlier unconfirmed write to the same key keeps the true original values.
+        // An earlier unconfirmed write to this key on this device keeps the true original values.
+        // One made on another device may be another keyboard's: start from this one's, after asking.
         const prev = state.undo;
         const same = prev && prev.pending && prev.productId === pid && prev.profile === profile && prev.key === key;
-        // Originals carried over from a record made on another connection may be another unit's.
-        setUndo({ productId: pid, profile, key, thrL: same ? prev.thrL : before.thrL, thrH: same ? prev.thrH : before.thrH,
-          wroteL: wanted.thrL, wroteH: wanted.thrH, pending: true, at: Date.now(),
-          device: same && prev.device !== device ? null : device });
+        const carry = same && prev.device === device;
+        if (same && !carry) {
+          const mmOf = (t) => f.thresholdToMm(t).toFixed(2);
+          if (!confirm(tr('confirmReplacePending', { key: keyName(key), a: mmOf(prev.thrL), b: mmOf(prev.thrH) }))) return;
+        }
+        setUndo({ productId: pid, profile, key, thrL: carry ? prev.thrL : before.thrL, thrH: carry ? prev.thrH : before.thrH,
+          wroteL: wanted.thrL, wroteH: wanted.thrH, pending: true, at: Date.now(), device });
       } else {
         setUndo(null); // Undo must never point at an older write than the last one
       }
@@ -1327,9 +1336,9 @@ async function onWrite() {
 }
 
 /** Keeps the monitor's points (and the saved copy) in step with a write. */
-function updateMonitorPoints(profile, key, after) {
-  if (profile === 0) setRamWritten(true);
-  else patchSavedThreshold(profile, key, after); // flash keeps it
+function updateMonitorPoints(profile, key, after, written = true) {
+  if (profile !== 0) patchSavedThreshold(profile, key, after); // flash keeps it
+  else if (written) setRamWritten(true);
   if (!state.thresholds.size) return;
   if (profile !== state.thrProfile) {
     thrStatus('thrStale');
@@ -1338,7 +1347,7 @@ function updateMonitorPoints(profile, key, after) {
   if (after.thrL > 0) state.thresholds.set(key, { thrL: after.thrL, thrH: after.thrH });
   else state.thresholds.delete(key); // 0/0: the host decides, nothing to judge against
   applyThresholds(state.thresholds);
-  if (profile === 0) state.ramEdited = true; // reverts on replug, so never saved
+  if (profile === 0 && written) state.ramEdited = true; // reverts on replug, so never saved
 }
 
 const UNDO_KEY = 'rsf.undo.v1';
@@ -1422,11 +1431,12 @@ async function onUndo() {
       }
       const after = await readKey(u.profile, u.key, device);
       const ok = after.thrL === u.thrL && after.thrH === u.thrH;
-      updateMonitorPoints(u.profile, u.key, after);
+      updateMonitorPoints(u.profile, u.key, after, sent);
       if (currentAssignment && currentAssignment.key === u.key) { currentAssignment = after; showAssignment(after); }
       state.lastRead = null;
       const k = keyName(u.key);
-      actLog(!ok ? `${tr('writeMismatch')}: ${k}` : sent ? `${tr('undoOk')}: ${k}` : tr('undoAlready', { key: k }));
+      if (!sent && !ok) actLog(tr('undoFail', { err: tr('errChangedSinceRead') })); // nothing was written
+      else actLog(!ok ? `${tr('writeMismatch')}: ${k}` : sent ? `${tr('undoOk')}: ${k}` : tr('undoAlready', { key: k }));
       if (ok && state.undo === u) setUndo(null);
     } catch (err) {
       actLog(tr(sent ? 'undoUnconfirmed' : 'undoFail', { err: err.message || err }));

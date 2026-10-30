@@ -109,7 +109,7 @@ class FakeHid:
 
     def __init__(self, pid=0x02CF, mode=3, answer_mode=True, fail_after_write=False, extra=()):
         self.pid, self.mode, self.answer_mode, self.fail_after_write = pid, mode, answer_mode, fail_after_write
-        self.store, self.writes, self.reports = {}, [], []
+        self.store, self.writes, self.reports, self.write_paths = {}, [], [], []
         self.infos = [
             {"product_id": pid, "interface_number": 1, "usage_page": 0x01, "usage": 0x06, "path": b"kbd"},
             {"product_id": pid, "interface_number": 1, "usage_page": 0x01, "usage": 0x00, "path": b"depth"},
@@ -148,6 +148,7 @@ class FakeHid:
                     r[8:17] = bytes(fake.store.get((p[8], p[9]), [p[8], p[9], 0, 76, 70, 2, 2, 0, 4]))
                 elif (cls, cmd) == (0x02, 0x12):
                     fake.writes.append(bytes(p[8:8 + 7 + p[14]]))
+                    fake.write_paths.append(self.path)
                     fake.store[(p[8], p[9])] = list(p[8:8 + 7 + p[14]])
                 self.reply = b"\x00" + bytes(r)
                 return len(data)
@@ -286,7 +287,7 @@ class CliScenarioTests(unittest.TestCase):
                     fake = FakeHid(pid=pid, mode=0)
                     fake.store[(0, 127)] = [0, 127, 0, thr_l, thr_h, 2, 2, 0, 4]
                     cmd = rs._restore_command(fam, rs.KeyAssignment(0, 127, 0, thr_l, thr_h, 2, b"\x00\x04"), pid)
-                    argv = cmd.split()[2:]
+                    argv = ["set-key"] + cmd.split(" set-key ", 1)[1].split()
                     fake.store[(0, 127)] = [0, 127, 0, 77 if thr_l != 77 else 78, 5, 2, 2, 0, 4]
                     code, out = self.run_cli(fake, argv + ["--yes"])
                     self.assertEqual(code, 0, (pid, thr_l, thr_h, cmd, out))
@@ -376,6 +377,22 @@ class CliScenarioTests(unittest.TestCase):
         code, out = self.run_cli(FakeHid(mode=0, extra=other), ["get-key"])
         self.assertEqual(code, 0, out)
         self.assertIn("several Razer keyboards", out)
+        # The model named by --pid gets the write, also when it is not the first one listed.
+        fake = FakeHid(mode=0, extra=other)
+        code, out = self.run_cli(fake, ["set-key", "--pid", "02A7", "--mm", "2.0", "--yes"])
+        self.assertEqual(code, 0, out)
+        self.assertEqual(fake.write_paths, [b"tkl-ctl"])
+        self.assertIn("Huntsman V3 Pro TKL (PID 02A7)", out)
+
+    def test_restore_command_names_the_script_as_run(self):
+        import sys
+        old = sys.argv[0]
+        try:
+            sys.argv[0] = "python/sensorfinder.py"
+            cmd = rs._restore_command(rs.V3, rs.KeyAssignment(1, 127, 0, 76, 70, 2, b""), 0x02CF)
+        finally:
+            sys.argv[0] = old
+        self.assertTrue(cmd.startswith("python python/sensorfinder.py set-key --pid 02CF"), cmd)
 
     def test_nan_rejected(self):
         code, _ = self.run_cli(FakeHid(mode=0), ["set-key", "--mm", "2.0", "--release-mm", "nan"])
