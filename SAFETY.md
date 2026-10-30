@@ -28,7 +28,7 @@ SensorFinder for Razer Huntsman은 Razer와 관계없는 **비공식** 도구입
 - **작업 중 장치 변경 차단**: 읽기·쓰기·되돌리기가 진행되는 동안에는 다른 키보드로 바꿀 수 없습니다. 도중에 키보드가 바뀌거나 빠지면 쓰지 않고 멈춥니다. 쓰기는 **현재 값 읽기**를 한 바로 그 장치로만 가며, 그 장치가 빠지면(같은 키보드를 다시 꽂아도) 다시 읽어야 씁니다.
 - **모델별 값 범위 검사** (허용 목록에서 한 번 더 검사)
   - 입력 지점: V3 계열 0.1–4.0 mm, V3 Pro Low-profile TKL 8KHz 0.1–2.8 mm(스위치 이동 거리), V2 계열 약 1.62–3.56 mm(펌웨어 범위)
-  - 해제 지점: 입력 지점보다 약 0.1 mm 이상 얕아야 함(펌웨어 최소 간격 V2 0.08 mm, V3 0.09 mm; V2는 펌웨어 하한 1.54 mm도 지킴)
+  - 해제 지점: 입력 지점보다 약 0.1 mm 이상 얕아야 함(최소 간격: V2는 펌웨어 기준 0.08 mm, V3는 Synapse 기본 간격을 따른 이 도구의 기준 0.09 mm; V2는 펌웨어 하한 1.54 mm도 지킴)
   - 범위 밖 값은 범위 안으로 깎아서 쓰지 않고 거부
   - 일반 레이어, 프로필 0–6, 알려진 키만 허용
 - **읽고-고치고-확인**: 현재 값을 읽어 입력·해제 지점만 바꿔 쓰고, 다시 읽어 확인합니다. 키 기능(fnId)은 그대로 둡니다. 손대지 않은 칸은 읽어 온 값 그대로 씁니다. 읽은 뒤에 키 값이 바뀌었으면 다시 읽을 때까지 쓰지 않습니다.
@@ -39,9 +39,9 @@ SensorFinder for Razer Huntsman은 Razer와 관계없는 **비공식** 도구입
 
 웹 화면에만 있는 장치
 - **첫 사용 동의**: 쓰기와 되돌리기 모두 안전 확인 항목에 동의해야 합니다.
-- **되돌리기**: 마지막 쓰기 직전 값으로 정확히 복원합니다(Synapse가 쓴 0/0 "PC가 판정" 값도 그대로 복원하므로, 이 경우에만 위 범위 검사의 예외입니다). 새로고침이나 키보드 재연결 뒤에도 같은 모델이면 남아 있지만, 그 뒤에는 같은 키보드인지 알 수 없으므로 쓰기 전에 한 번 더 묻습니다. 키의 현재 값이 이 도구가 썼던 값과 다르면(다른 키보드이거나 그 사이 바뀐 경우)에도 묻습니다. 연결된 상태에서 **키보드 연결**로 다른 키보드를 고르면 이전 키보드의 되돌리기와 지점은 넘어가지 않고(그 뒤 다시 고르거나 재연결해도 마찬가지), 쓰던 키보드를 다시 고르면 그대로 남습니다. 어느 키보드의 것인지 모르는 기록(새로고침·재연결 뒤)은 어느 키보드를 고르든 남고, 쓰기 전에 묻습니다. 재연결 뒤 플래시 키가 이미 원래 값이면 다른 키보드일 수 있으므로, 되돌리기 기록을 지울지 먼저 묻습니다. 원래 값이 이 도구의 범위 밖이라 되돌릴 수 없으면 쓰기 전에 미리 알리고, 이전 되돌리기 기록은 지웁니다.
+- **되돌리기**: 마지막 쓰기 직전 값으로 정확히 복원합니다(Synapse가 쓴 0/0 "PC가 판정" 값도 그대로 복원하므로, 이 경우에만 위 범위 검사의 예외입니다). 같은 모델 키보드는 서로 구별할 수 없으므로, 되돌리기 기록은 새로고침·재연결·키보드 선택으로 지워지거나 숨겨지지 않습니다. 대신 값을 썼던 바로 그 장치(그 뒤로 계속 연결된 상태)가 아니면 쓰기 전에 묻고, 키의 현재 값이 이 도구가 썼던 값과 다를 때도 묻습니다. 키가 이미 원래 값이면, 그 장치가 아닌 한 기록을 지울지 묻습니다. 원래 값이 이 도구의 범위 밖이라 되돌릴 수 없으면 쓰기 전에 미리 알리고, 이전 되돌리기 기록은 지웁니다.
 
-명령줄 도구(`set-key`)에는 동의 화면과 되돌리기 버튼이 없습니다. 대신 어떤 질문보다 먼저 원래 값과 **그대로 되돌리는 명령**(슬롯 번호와 정확한 값 포함)을 출력하고, 그 명령으로 되돌릴 수 없는 값(Synapse의 0/0 포함)이면 미리 묻습니다. 질문에 답하는 사이 키 값이 바뀌었으면 쓰지 않습니다. 모드를 읽지 못하거나 모르는 모드 값이 오면 Synapse 경고를 띄웁니다. 같은 모델 키보드가 두 대 이상 연결돼 있으면 구별할 수 없으므로 쓰지 않습니다(쓸 키보드만 남기세요). `--yes`는 질문만 건너뛰고 경고는 계속 출력합니다.
+명령줄 도구(`set-key`)에는 동의 화면과 되돌리기 버튼이 없습니다. 대신 어떤 질문보다 먼저 쓸 키보드(모델명과 PID), 원래 값, **그대로 되돌리는 명령**(모델 PID, 슬롯 번호, 정확한 값 포함)을 출력하고, 그 명령으로 되돌릴 수 없는 값(Synapse의 0/0 포함)이면 미리 묻습니다. 질문에 답하는 사이 키 값이 바뀌었으면 쓰지 않습니다. 모드를 읽지 못하거나 모르는 모드 값이 오면 Synapse 경고를 띄웁니다. 같은 모델 키보드가 두 대 이상 연결돼 있으면 구별할 수 없으므로 쓰지 않고(쓸 키보드만 남기세요), 서로 다른 모델이 함께 연결돼 있으면 `--pid`로 고를 때까지 쓰지 않습니다. `--yes`는 질문만 건너뛰고 경고는 계속 출력합니다.
 
 ## 문제가 생겼을 때
 
@@ -58,7 +58,7 @@ SensorFinder for Razer Huntsman은 Razer와 관계없는 **비공식** 도구입
 - 입력/해제 판정은 읽어 온 지점으로 계산한 **추정**입니다. Rapid Trigger는 반영하지 않습니다.
 - Synapse가 실행 중이면 키보드가 활성 프로필 번호에 응답하지 않습니다. 이때는 RAM 값을 사용합니다.
 - 실기기 확인은 Huntsman V3 Pro 8KHz에서 했습니다. 다른 모델은 프로토콜 문서 기준이므로 RAM부터 시험하세요.
-- 브라우저(WebHID)는 일련번호를 알려 주지 않아 같은 모델 키보드 두 대를 구별하지 못합니다. 두 대가 함께 연결되면 쓰기를 막고, **키보드 연결**로 고른 한 대만 남깁니다. 키보드를 뺐다 다른 키보드를 꽂은 경우는 재연결과 구별되지 않으므로, 되돌리기가 쓰기 전에 묻습니다.
+- 브라우저(WebHID)는 일련번호를 알려 주지 않아 같은 모델 키보드 두 대를 구별하지 못합니다. 두 대가 함께 연결되면 쓰기를 막고, **키보드 연결**로 고른 한 대만 남깁니다. 고른 키보드가 이전 키보드와 같은지는 알 수 없으므로, 되돌리기는 쓰기 전에 묻고, 다른 키보드에서 읽었을 수 있는 지점은 다시 불러오라고 안내합니다.
 - Synapse를 켜거나 끄면 깊이 스트림이 다시 시작되거나 멈춥니다. 페이지는 창으로 돌아올 때와 쓰기 탭을 열 때 모드를 다시 확인하고, 그때 '입력 중'으로 남아 있던 키는 마지막 리포트 시각에 끊긴 것으로 처리합니다. 그 전까지는 이전 상태가 보일 수 있습니다.
 - 지점을 읽어 온 키보드가 빠지고 같은 모델의 다른 키보드가 남으면, 지금 키보드에서 다시 불러오라고 안내합니다.
 - RAM(프로필 0)에 쓴 값은 재연결하면 돌아가므로 저장해 둔 지점에 넣지 않습니다. 쓴 뒤 새로고침하면 저장된 지점을 쓰면서 다시 불러오라고 안내합니다.
@@ -100,7 +100,7 @@ The depth monitor only **reads** input reports the keyboard already sends.
 - **No device switch mid-operation**: while a read, write or undo runs the keyboard cannot be switched; if it changes or disconnects meanwhile, nothing is written. A write only goes to the device **Read current value** was used on; if that device goes away (even when the same keyboard is plugged back in), read again before writing.
 - **Per-model range checks** (checked again by the allowlist)
   - Actuation point: 0.1–4.0 mm on the V3 line, 0.1–2.8 mm on the V3 Pro Low-profile TKL 8KHz (switch travel), about 1.62–3.56 mm on the V2 line (firmware range)
-  - Release point: about 0.1 mm or more shallower than the actuation point (the firmware's minimum gap, 0.08 mm on V2 and 0.09 mm on V3; and the V2 firmware floor of 1.54 mm)
+  - Release point: about 0.1 mm or more shallower than the actuation point (minimum gap: 0.08 mm on V2, set by the firmware; 0.09 mm on V3, this tool's rule following Synapse's default spacing; and the V2 firmware floor of 1.54 mm)
   - Out-of-range values are refused, never clamped into range
   - Normal layer, profiles 0–6 and known keys only
 - **Read-modify-verify**: reads the current value, changes only the two points, reads it back to verify. The key's function (fnId) is kept, and a field left as read is written back exactly. If the key changed since it was read, nothing is written until you read it again.
@@ -111,9 +111,9 @@ The depth monitor only **reads** input reports the keyboard already sends.
 
 Web page only
 - **First-use consent**: required for writing and for Undo.
-- **Undo**: restores exactly the values the last write replaced (including Synapse's 0/0 "decided on the PC", the one exception to the range checks above); it survives a reload or replug for the same model, but after one it cannot tell whether it is the same keyboard, so it asks once more before writing. It also asks when the key no longer holds what this tool wrote (another keyboard, or changed since). Picking another keyboard with **Connect keyboard** while one is connected does not carry the previous keyboard's Undo or points over (nor does picking or replugging it again later); picking the keyboard in use keeps them. A record whose keyboard is unknown (after a reload or reconnect) stays whichever keyboard you pick, and asks before writing. If after a reconnect a flash key already holds the original values, it may be another keyboard, so you are asked before the Undo record is deleted. If the original values are outside this tool's range, so Undo could not write them back, you are told before writing and the older Undo record is cleared.
+- **Undo**: restores exactly the values the last write replaced (including Synapse's 0/0 "decided on the PC", the one exception to the range checks above); keyboards of the same model cannot be told apart, so the record is never deleted or hidden by a reload, a reconnect or picking a keyboard. Instead it asks before writing on anything but the device it wrote to (attached ever since), and also when the key no longer holds what this tool wrote. If the key already holds the original values, it asks before deleting the record unless it is that same device. If the original values are outside this tool's range, so Undo could not write them back, you are told before writing and the older Undo record is cleared.
 
-The command-line `set-key` has no consent screen or Undo button. Instead, before asking anything, it prints the original values and a **ready-to-run restore command** (explicit slot number, exact values), and asks first if that command could not restore them (Synapse's 0/0 included). If the key changes while you answer, nothing is written. It also warns when the mode cannot be read or is a value it does not know. With two or more keyboards of the same model connected it cannot tell them apart, so it refuses to write (leave only the one to change). `--yes` skips the questions only; the warnings are still printed.
+The command-line `set-key` has no consent screen or Undo button. Instead, before asking anything, it prints the keyboard it will write to (model name and PID), the original values and a **ready-to-run restore command** (model PID, explicit slot number, exact values), and asks first if that command could not restore them (Synapse's 0/0 included). If the key changes while you answer, nothing is written. It also warns when the mode cannot be read or is a value it does not know. With two or more keyboards of the same model connected it cannot tell them apart, so it refuses to write (leave only the one to change); with different models connected it refuses until you choose one with `--pid`. `--yes` skips the questions only; the warnings are still printed.
 
 ### If something goes wrong
 
@@ -130,7 +130,7 @@ The command-line `set-key` has no consent screen or Undo button. Instead, before
 - Input on/off is an **estimate** from the loaded points; Rapid Trigger is not modelled.
 - While Synapse runs the keyboard does not answer the active-profile query; RAM values are used instead.
 - Verified on hardware with the Huntsman V3 Pro 8KHz. Other models follow the protocol notes only, so try RAM first.
-- The browser (WebHID) exposes no serial number, so two keyboards of the same model cannot be told apart. With both connected, writes are blocked and **Connect keyboard** keeps only the one you pick. Unplugging one keyboard and plugging in another looks like a replug, which is why Undo asks before writing.
+- The browser (WebHID) exposes no serial number, so two keyboards of the same model cannot be told apart. With both connected, writes are blocked and **Connect keyboard** keeps only the one you pick. Whether the picked keyboard is the earlier one is unknown, so Undo asks before writing, and points that may have been read from another keyboard come with a hint to load them again.
 - Starting or quitting Synapse starts or stops the depth stream. The page checks the mode again when you return to its window and when the write tab opens; keys still shown as "input on" are then closed at the time of their last report. Until then the previous state may show.
 - If the keyboard the points were read from leaves while another of the same model stays, the page asks you to load them again from the one connected.
 - Values written to RAM (profile 0) revert on replug, so they are not put into the saved points. After a reload the saved points are used with a hint to load again.

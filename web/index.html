@@ -262,8 +262,8 @@ const state = {
   ramEdited: false,    // a RAM write changed the monitor's points; RAM reverts on replug
   thrPartial: false,   // the loaded points miss keys that could not be read
   multiUnit: false,    // two keyboards of the same model are attached at once
-  foreignBefore: {},   // per model: saved Undo/points up to this time belong to a unit picked away from
-  boundTo: null,       // control device the points, read or Undo were taken from on this page (null: unknown)
+  thrDevice: null,     // control device the monitor's points were loaded from (null: saved or unknown)
+  thrRebind: false,    // a replug: bind the points to the control interface once it is back
 };
 
 const CHART_MS = 5000;
@@ -591,7 +591,6 @@ function patchSavedThreshold(profile, key, v) {
   try {
     const saved = JSON.parse(localStorage.getItem(thresholdStoreKey()) || 'null');
     if (!saved || saved.profile !== profile || !saved.keys || typeof saved.keys !== 'object' || Array.isArray(saved.keys)) return;
-    if ((Number(saved.savedAt) || 0) <= foreignCutoff()) return; // another unit's set
     if (v.thrL > 0) saved.keys[key] = [v.thrL, v.thrH];
     else delete saved.keys[key];
     localStorage.setItem(thresholdStoreKey(), JSON.stringify(saved));
@@ -640,12 +639,7 @@ function modeChanged() {
 }
 
 function hasSavedThresholds() {
-  return savedThresholds() !== null; // a set hidden as another unit's does not count
-}
-
-/** Saved records of this model from before this time belong to a unit picked away from (-1: none). */
-function foreignCutoff() {
-  return state.foreignBefore[state.productId] || -1;
+  return savedThresholds() !== null;
 }
 
 /** The saved points for this model as {map, profile, when}, or null. */
@@ -654,7 +648,6 @@ function savedThresholds() {
     const saved = JSON.parse(localStorage.getItem(thresholdStoreKey()) || 'null');
     if (!saved || typeof saved.keys !== 'object' || !saved.keys) return null;
     const when = Number(saved.savedAt) || 0;
-    if (when <= foreignCutoff()) return null; // saved for the unit picked away from
     const ok = (t) => Number.isInteger(t) && t >= 0 && t <= 255;
     // The storage is shared with other pages on this origin: take only well-formed entries.
     const map = new Map(Object.entries(saved.keys)
@@ -669,6 +662,8 @@ function restoreThresholds() {
   const saved = savedThresholds();
   if (!saved) return false;
   applyThresholds(saved.map);
+  state.thrDevice = null; // which keyboard they came from is not known
+  state.thrRebind = false;
   state.thrPartial = false;
   state.ramEdited = false;
   state.thrProfile = saved.profile;
@@ -683,9 +678,11 @@ async function loadThresholds() {
   await withBusy(async () => {
     const pid = state.productId;
     const SWITCHED = {}, LOST = {};
+    // Every key is read from one keyboard: the first one that answers.
+    let dev = state.control;
     const gone = () => {
       if (state.productId !== pid) throw SWITCHED;
-      if (!state.devices.length) throw LOST;
+      if (!state.devices.length || (dev && !state.devices.includes(dev))) throw LOST;
     };
     try {
       let profile = 0, fellBack = false;
@@ -704,7 +701,10 @@ async function loadThresholds() {
           gone();
           thrStatus('thrLoading', () => ({ i: i + 1, n: pending.length }));
           let a = null;
-          try { a = await readKey(profile, pending[i]); } catch (err) {
+          try {
+            a = await readKey(profile, pending[i], dev);
+            dev = dev || state.control;
+          } catch (err) {
             lastErr = err;
             // 03 fail / 05 not supported: the board has no such key (e.g. 한자/한영 on ANSI).
             if (err.status === 3 || err.status === 5) { refused++; continue; }
@@ -724,7 +724,8 @@ async function loadThresholds() {
         throw new Error(tr('errNoneRead', { n: failed || refused, err: lastErr ? lastErr.message || lastErr : '-' }));
       }
       applyThresholds(map);
-      state.boundTo = state.control;
+      state.thrDevice = dev;
+      state.thrRebind = false;
       state.thrProfile = profile;
       state.thrPartial = failed > 0;
       // RAM read after a RAM write this session holds values that revert on replug: use, never save.
@@ -842,7 +843,8 @@ function resetBoardState() {
   state.thrMsg = ['thrNotLoaded', null, []];
   state.undo = null;
   state.lastRead = null;
-  state.boundTo = null;
+  state.thrDevice = null;
+  state.thrRebind = false;
   state.mode = null;
   state.streamSeen = false;
   state.unrecognized = 0;
@@ -912,26 +914,27 @@ async function attachNow(devices, user) {
     if (user) throw new Error(tr('errBusySwitch'));
     return;
   }
-  // Another unit for certain: the keyboard this page's points, read or Undo came from is still
-  // attached and was not picked. Nothing recorded for it applies to the pick.
-  const bound = state.boundTo;
-  const otherUnit = switching && pid === state.productId && !!bound && state.devices.includes(bound) && !group.includes(bound);
-  const replug = !switching && state.lostDevice;
-  if (switching && (otherUnit || pid !== state.productId)) {
+  // A replug brings the keyboard back by itself; a pick in the chooser may be any unit.
+  const replug = !switching && state.lostDevice && !user;
+  if (switching && pid !== state.productId) {
     releaseDevices(opened);
     state.productId = pid;
     resetBoardState();
-    // Its saved Undo and points stay hidden for this model. The RAM-write flag stays: which unit
-    // holds that RAM edit is unknown, and only a replug of every unit reverts it.
-    if (otherUnit) state.foreignBefore[pid] = Date.now();
-  } else if (switching) {
-    // One of the attached units, not known to be another one: let the rest go and keep the
-    // state; whatever is not bound to the picked unit asks before writing.
+  } else if (switching || (user && state.lostDevice)) {
+    // A keyboard of this model picked. Units of one model cannot be told apart, so nothing is
+    // dropped: Undo asks before writing on any device but the one it wrote to, and points read
+    // from another device are marked. The RAM-write flag stays (that unit's RAM may still hold it).
     releaseDevices(opened);
-    if (state.undo && state.undo.device && !group.includes(state.undo.device)) state.undo = { ...state.undo, device: null };
     if (state.lastRead && !group.includes(state.lastRead.device)) state.lastRead = null;
+    if (state.thrDevice && !group.includes(state.thrDevice)) {
+      state.thrDevice = null;
+      if (state.thresholds.size) thrStatus('thrOtherUnit');
+    }
   } else if (replug) {
     ramReverted(); // RAM went back to the active profile
+    // Taken as the same keyboard; its interfaces come back one by one, control maybe last.
+    state.thrRebind = state.thrDevice !== null;
+    state.thrDevice = null;
   }
   for (const d of opened) {
     if (state.devices.includes(d)) continue;
@@ -943,7 +946,10 @@ async function attachNow(devices, user) {
   // The chooser returns one physical keyboard; automatic attaches may see two of one model.
   state.multiUnit = !user && hasDuplicateUnits(state.devices);
   if (!state.devices.includes(state.control)) state.control = state.devices.find(hasControlCollection) || null;
-  if (replug && state.boundTo) state.boundTo = state.control; // a replug is taken as the same keyboard
+  if (state.thrRebind && state.control) {
+    state.thrDevice = state.control;
+    state.thrRebind = false;
+  }
   state.lostDevice = false;
   renderDevName();
   renderModeHint();
@@ -976,7 +982,7 @@ function onDisconnect(e) {
   if (state.control === e.device) state.control = null;
   if (state.lastRead && state.lastRead.device === e.device) state.lastRead = null; // read again after a replug
   state.multiUnit = state.multiUnit && hasDuplicateUnits(state.devices);
-  if (e.device === state.boundTo && state.devices.some(hasControlCollection)) {
+  if (e.device === state.thrDevice && state.devices.some(hasControlCollection)) {
     // The keyboard the points came from left while another unit of the model stays.
     dropRamEdits();
     if (state.thresholds.size) thrStatus('thrUnitGone');
@@ -1177,7 +1183,6 @@ async function onRead() {
       // Remember the exact values so an untouched field writes back what was read, not a rounded value.
       state.lastRead = { productId: state.productId, device: state.control, key, sel, profile,
         thrL: currentAssignment.thrL, thrH: currentAssignment.thrH, mmL, mmH };
-      state.boundTo = state.control;
       actLog(tr('readOk', { key: keyName(key), p: profile }));
     } catch (err) {
       actLog(tr('readFail', { err: err.message || err }));
@@ -1355,8 +1360,7 @@ function restoreUndo() {
     const u = JSON.parse(localStorage.getItem(UNDO_KEY) || 'null');
     const byte = (v) => Number.isInteger(v) && v >= 0 && v <= 255;
     if (u && u.productId === state.productId && Number.isInteger(u.profile) && u.profile >= 0 && u.profile <= 6
-        && P.KEY_NAMES[u.key] && byte(u.thrL) && byte(u.thrH)
-        && (Number(u.at) || 0) > foreignCutoff()) { // not made on the unit picked away from
+        && P.KEY_NAMES[u.key] && byte(u.thrL) && byte(u.thrH)) {
       // No device: which keyboard it was made on is unknown now, so Undo asks before writing.
       state.undo = { productId: u.productId, profile: u.profile, key: u.key, thrL: u.thrL, thrH: u.thrH, pending: !!u.pending, device: null };
       if (byte(u.wroteL) && byte(u.wroteH)) Object.assign(state.undo, { wroteL: u.wroteL, wroteH: u.wroteH });
@@ -1392,13 +1396,12 @@ async function onUndo() {
       sameBoard(pid);
       const now = await readKey(u.profile, u.key);
       const device = state.control;
-      state.boundTo = device;
       const f = fam();
       const mmOf = (t) => f.thresholdToMm(t).toFixed(2);
       if (now.thrL === u.thrL && now.thrH === u.thrH) {
-        // Already the originals. Flash keeps a write across a reconnect, so on another connection
-        // this may be another unit of the model: the record is only dropped if the user says so.
-        if (u.device !== device && u.profile !== 0
+        // Already the originals. Unless this is the device the write went to (attached since), it
+        // may be another unit, or RAM not yet reverted: the record is only dropped if the user says so.
+        if (u.device !== device
             && !confirm(tr('confirmUndoAlready', { key: keyName(u.key), a: mmOf(u.thrL), b: mmOf(u.thrH) }))) {
           actLog(tr('undoKept', { key: keyName(u.key) }));
           return;
@@ -1422,7 +1425,8 @@ async function onUndo() {
       updateMonitorPoints(u.profile, u.key, after);
       if (currentAssignment && currentAssignment.key === u.key) { currentAssignment = after; showAssignment(after); }
       state.lastRead = null;
-      actLog(tr(ok ? 'undoOk' : 'writeMismatch') + `: ${keyName(u.key)}`);
+      const k = keyName(u.key);
+      actLog(!ok ? `${tr('writeMismatch')}: ${k}` : sent ? `${tr('undoOk')}: ${k}` : tr('undoAlready', { key: k }));
       if (ok && state.undo === u) setUndo(null);
     } catch (err) {
       actLog(tr(sent ? 'undoUnconfirmed' : 'undoFail', { err: err.message || err }));

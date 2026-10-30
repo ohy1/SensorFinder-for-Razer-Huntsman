@@ -308,11 +308,26 @@ def _hid():
     return hid
 
 
-def find_keyboard(hid):
+def find_keyboard(hid, pid: int | None = None, write: bool = False):
+    """The interfaces of one supported keyboard model: `pid`, or the only one connected.
+
+    With several supported models connected and no `pid`, a write is refused (which one is meant
+    is unknown); reads and the monitor use the first one and say so.
+    """
     infos = [d for d in hid.enumerate(VENDOR_RAZER, 0) if d["product_id"] in MODELS]
-    if not infos:
+    pids = list(dict.fromkeys(d["product_id"] for d in infos))
+    if pid is not None:
+        if pid not in pids:
+            raise SystemExit(f"no supported Razer keyboard with PID {pid:04X} found (run `list`)")
+    elif not pids:
         raise SystemExit("no supported Razer Huntsman analog keyboard found (run `list`)")
-    return infos[0]["product_id"], [d for d in infos if d["product_id"] == infos[0]["product_id"]]
+    elif len(pids) > 1:
+        names = ", ".join(f"{MODELS[p][0]} (--pid {p:04X})" for p in pids)
+        if write:
+            raise SystemExit(f"several Razer keyboards are connected: {names}; choose one with --pid")
+        print(f"note: several Razer keyboards are connected: {names}; using the first (choose with --pid)")
+    pid = pids[0] if pid is None else pid
+    return pid, [d for d in infos if d["product_id"] == pid]
 
 
 def unit_count(interfaces) -> int:
@@ -435,7 +450,7 @@ OS_OWNED_USAGES = {(0x01, 0x02), (0x01, 0x04), (0x01, 0x05), (0x01, 0x06), (0x01
 
 def cmd_monitor(args):
     hid = _hid()
-    pid, interfaces = find_keyboard(hid)
+    pid, interfaces = find_keyboard(hid, args.pid)
     name, family, _ = MODELS[pid]
     if unit_count(interfaces) > 1:
         print(f"note: two or more Razer {name} keyboards are connected; their touches are shown together")
@@ -503,7 +518,7 @@ def cmd_monitor(args):
 
 def _control(args, write=False):
     hid = _hid()
-    pid, interfaces = find_keyboard(hid)
+    pid, interfaces = find_keyboard(hid, args.pid, write)
     name, family, _ = MODELS[pid]
     if unit_count(interfaces) > 1:
         if write:
@@ -515,7 +530,8 @@ def _control(args, write=False):
     rng = write_range(pid)
     ctl = Control(hid, interfaces, family, rng)
     profile = ctl.active_profile() if args.profile == "active" else int(args.profile)
-    return name, family, rng, ctl, profile
+    print(f"keyboard: Razer {name} (PID {pid:04X})")
+    return pid, name, family, rng, ctl, profile
 
 
 def _describe(family: Family, a: KeyAssignment) -> str:
@@ -528,7 +544,7 @@ def _describe(family: Family, a: KeyAssignment) -> str:
 
 
 def cmd_get_key(args):
-    _, family, _, ctl, profile = _control(args)
+    _, _, family, _, ctl, profile = _control(args)
     print(_describe(family, ctl.read_key(profile, key_id(args.key))))
 
 
@@ -570,18 +586,19 @@ def mm_in_range(family: Family, rng: tuple[int, int], mm: float) -> bool:
     return printed or rng[0] - 0.5 < units < rng[1] + 0.5
 
 
-def _restore_command(family: Family, a: KeyAssignment) -> str:
+def _restore_command(family: Family, a: KeyAssignment, pid: int) -> str:
     if a.thr_l == 0 and a.thr_h == 0:
         return "(0/0 = decided by Synapse/host: this tool cannot write it back; re-apply the profile in Razer Synapse)"
-    # The explicit slot number, so it restores the same slot even if the active one changes.
+    # The explicit model and slot number, so it restores the same slot even if the active one
+    # changes or another model is plugged in.
     return (
-        f"python sensorfinder.py set-key --key {a.key} --profile {a.profile} "
+        f"python sensorfinder.py set-key --pid {pid:04X} --key {a.key} --profile {a.profile} "
         f"--mm {mm_exact(family, a.thr_l)} --release-mm {mm_exact(family, a.thr_h)}"
     )
 
 
 def cmd_set_key(args):
-    name, family, rng, ctl, profile = _control(args, write=True)
+    pid, name, family, rng, ctl, profile = _control(args, write=True)
     if not math.isfinite(args.mm) or (args.release_mm is not None and not math.isfinite(args.release_mm)):
         raise SystemExit("--mm and --release-mm must be numbers")
     # Out-of-range input must be refused, not clamped into range.
@@ -602,13 +619,13 @@ def cmd_set_key(args):
         if thr_h > thr_l - family.min_release_gap:
             raise SystemExit(
                 f"--release-mm must be about 0.1 mm or more shallower than --mm "
-                f"({family.threshold_to_mm(thr_l):.2f} mm as written; the firmware's minimum gap)"
+                f"({family.threshold_to_mm(thr_l):.2f} mm as written; the minimum gap)"
             )
 
     before = ctl.read_key(profile, key)
     # Shown before anything is asked or written, so the original values are known whatever happens.
     print("before:", _describe(family, before))
-    print("  to restore it:", _restore_command(family, before))
+    print("  to restore it:", _restore_command(family, before, pid))
     restorable = not (before.thr_l == 0 and before.thr_h == 0)
     try:
         check_packet(build_packet(0x02, 0x12, 80, before.to_args()), family, rng)
@@ -662,10 +679,12 @@ def main(argv=None):
     m = sub.add_parser("monitor", help="watch the depth stream (needs Synapse running)")
     m.add_argument("--csv", help="write every touch to this CSV file")
     m.add_argument("--noise", type=int, default=0, help="ignore raw depth <= N")
+    m.add_argument("--pid", type=lambda x: int(x, 16), help="product ID (hex) when several models are connected")
     m.set_defaults(func=cmd_monitor)
     for name, func in (("get-key", cmd_get_key), ("set-key", cmd_set_key)):
         p = sub.add_parser(name, help=f"{name.split('-')[0]} one key's actuation point (close Synapse first)")
         p.add_argument("--key", default="Win", help="key name or fwID (default: Win)")
+        p.add_argument("--pid", type=lambda x: int(x, 16), help="product ID (hex) when several models are connected")
         p.add_argument(
             "--profile", choices=["0", "1", "2", "3", "4", "5", "6", "active"], default="0",
             help="0 = RAM (default), 1-6 = that flash slot, active = the active flash slot",

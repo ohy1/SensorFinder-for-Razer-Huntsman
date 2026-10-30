@@ -285,7 +285,7 @@ class CliScenarioTests(unittest.TestCase):
                 for thr_h in sorted({fam.min_release, (fam.min_release + thr_l - fam.min_release_gap) // 2, thr_l - fam.min_release_gap}):
                     fake = FakeHid(pid=pid, mode=0)
                     fake.store[(0, 127)] = [0, 127, 0, thr_l, thr_h, 2, 2, 0, 4]
-                    cmd = rs._restore_command(fam, rs.KeyAssignment(0, 127, 0, thr_l, thr_h, 2, b"\x00\x04"))
+                    cmd = rs._restore_command(fam, rs.KeyAssignment(0, 127, 0, thr_l, thr_h, 2, b"\x00\x04"), pid)
                     argv = cmd.split()[2:]
                     fake.store[(0, 127)] = [0, 127, 0, 77 if thr_l != 77 else 78, 5, 2, 2, 0, 4]
                     code, out = self.run_cli(fake, argv + ["--yes"])
@@ -361,6 +361,21 @@ class CliScenarioTests(unittest.TestCase):
         self.assertNotIn("may already have been applied", out)
         self.assertNotIn("before:", out)
         self.assertEqual(fake.writes, [])
+
+    def test_two_models_need_a_choice(self):
+        other = [{"product_id": 0x02A7, "interface_number": 3, "usage_page": 0x0C, "usage": 0x01, "path": b"tkl-ctl"}]
+        fake = FakeHid(mode=0, extra=other)
+        code, _ = self.run_cli(fake, ["set-key", "--mm", "2.0", "--yes"])
+        self.assertIn("choose one with --pid", str(code))
+        self.assertEqual(fake.writes, [])
+        fake = FakeHid(mode=0, extra=other)
+        code, out = self.run_cli(fake, ["set-key", "--pid", "02CF", "--mm", "2.0", "--yes"])
+        self.assertEqual(code, 0, out)
+        self.assertIn("keyboard: Razer Huntsman V3 Pro 8KHz (PID 02CF)", out)
+        self.assertIn("set-key --pid 02CF --key 127", out)  # the restore command names the model
+        code, out = self.run_cli(FakeHid(mode=0, extra=other), ["get-key"])
+        self.assertEqual(code, 0, out)
+        self.assertIn("several Razer keyboards", out)
 
     def test_nan_rejected(self):
         code, _ = self.run_cli(FakeHid(mode=0), ["set-key", "--mm", "2.0", "--release-mm", "nan"])
