@@ -333,3 +333,52 @@ test('an input on a key held through a reset has no made-up time to input', () =
   assert.equal(t.events[0].fired, true);
   assert.equal(t.events[0].firstOnMs, null);
 });
+
+test('an input that is on during a reset stays on and is not counted again', () => {
+  const t = new P.DepthTracker();
+  t.setThresholds([[127, { press: 100, release: 90 }]]);
+  t.update([{ id: 127, raw: 150 }], 0);
+  t.update([{ id: 127, raw: 95 }], 5); // back in the release/actuation band: still on
+  t.reset();
+  assert.ok(t.active.has(127));
+  t.update([{ id: 127, raw: 95 }], 10);
+  t.update([{ id: 127, raw: 150 }], 15); // deeper again: the firmware sees no new input
+  t.update([], 20);
+  assert.equal(t.stats.get(127).activations, 0);
+  assert.equal(t.events[0].fired, true);
+  assert.equal(t.events[0].activations, 0);
+  assert.ok(!t.active.has(127));
+});
+
+test('moving a key\'s points judges that key afresh and exports keep the points used', () => {
+  const t = new P.DepthTracker();
+  t.setThresholds([[58, { press: 76, release: 70 }], [31, { press: 76, release: 70 }]]);
+  t.update([{ id: 58, raw: 96 }, { id: 31, raw: 20 }], 0); // Caps Lock registers under the old point
+  t.update([], 10);
+  assert.equal(t.events[0].press, 76);
+  t.setThresholds([[58, { press: 192, release: 179 }], [31, { press: 76, release: 70 }]]);
+  const caps = t.stats.get(58), a = t.stats.get(31);
+  assert.deepEqual([caps.activations, caps.judgedTouches, caps.judgedPeak], [0, 0, 0]);
+  assert.equal(caps.touches, 1); // what was sensed stays
+  assert.equal(a.judgedTouches, 1); // unchanged points keep their verdicts
+  t.update([{ id: 58, raw: 96 }], 20);
+  t.update([], 30);
+  assert.equal(t.events[2].fired, false);
+  assert.equal(t.events[2].press, 192);
+});
+
+test('mm text for a threshold never sits on a rounding tie; V3 release may be 0', () => {
+  const v2 = P.FAMILIES.v2, v3 = P.FAMILIES.v3;
+  assert.equal(P.mmExact(v2, 144, 2), '2.686'); // 2.69 is exactly 144.5 units
+  assert.equal(P.mmExact(v2, 5), '1.54');
+  for (const f of [v2, v3]) {
+    for (let thr = 1; thr < 256; thr++) {
+      const units = f.mmToUnits(Number(P.mmExact(f, thr)));
+      assert.ok(Math.abs(units - thr) < 0.5, `${thr}`);
+      assert.equal(f.mmToRelease(Number(P.mmExact(f, thr))), thr);
+    }
+  }
+  assert.equal(v3.mmToRelease(0.005), 0);
+  assert.equal(v3.mmToThreshold(0.005), 1);
+  assert.equal(v3.mmToRelease(-1), 0);
+});

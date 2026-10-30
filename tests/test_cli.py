@@ -162,11 +162,12 @@ class FakeHid:
 
 
 class CliScenarioTests(unittest.TestCase):
-    def run_cli(self, fake, argv, answers=(), sleep=lambda s: None):
+    def run_cli(self, fake, argv, answers=(), sleep=lambda s: None, on_ask=lambda q: None):
         import builtins, io, contextlib, types
         answers = list(answers)
 
         def fake_input(q):
+            on_ask(q)
             if not answers:
                 raise EOFError
             return answers.pop(0)
@@ -231,7 +232,11 @@ class CliScenarioTests(unittest.TestCase):
     def test_v2_release_floor_message(self):
         fake = FakeHid(pid=0x0266, mode=0)
         code, _ = self.run_cli(fake, ["set-key", "--mm", "2.0", "--release-mm", "1.5"])
-        self.assertIn("cannot be shallower than 1.55", str(code))
+        self.assertIn("cannot be shallower than 1.54", str(code))
+        fake = FakeHid(pid=0x0266, mode=0)
+        code, out = self.run_cli(fake, ["set-key", "--mm", "1.62", "--release-mm", "1.54", "--yes"])
+        self.assertEqual(code, 0, out)
+        self.assertEqual(fake.writes[0][3:5], bytes([15, 5]))  # the floor itself is accepted
 
     def test_restore_command_round_trips_on_v2(self):
         for thr in range(256):
@@ -249,8 +254,73 @@ class CliScenarioTests(unittest.TestCase):
         fake = FakeHid(mode=0)
         fake.store[(0, 127)] = [0, 127, 0, 76, 75, 2, 2, 0, 4]  # 1 unit apart: outside the release gap
         code, out = self.run_cli(fake, ["set-key", "--mm", "2.0"], answers=["n"])
-        self.assertIn("outside this tool's range", out)
+        self.assertIn("cannot write these original values back", out)
         self.assertEqual(code, "aborted, nothing written")
+        self.assertEqual(fake.writes, [])
+
+    def test_v3_maximum_is_accepted(self):
+        for pid, mm, thr in ((0x02CF, "4.0", 255), (0x02CF, "3.99", 255), (0x02CF, "0.1", 6), (0x02E6, "2.8", 179)):
+            fake = FakeHid(pid=pid, mode=0)
+            code, out = self.run_cli(fake, ["set-key", "--mm", mm, "--yes"])
+            self.assertEqual(code, 0, (pid, mm, out))
+            self.assertEqual(fake.writes[0][3], thr)
+        for pid, mm in ((0x02CF, "4.01"), (0x02CF, "0.05"), (0x02E6, "2.81"), (0x0266, "3.57"), (0x0266, "1.6")):
+            fake = FakeHid(pid=pid, mode=0)
+            code, _ = self.run_cli(fake, ["set-key", "--mm", mm, "--yes"])
+            self.assertIn("--mm must be within", str(code), (pid, mm))
+            self.assertEqual(fake.writes, [])
+
+    def test_tiny_release_on_v3_is_zero_not_a_crash(self):
+        fake = FakeHid(mode=0)
+        code, out = self.run_cli(fake, ["set-key", "--mm", "0.1", "--release-mm", "0.005", "--yes"])
+        self.assertEqual(code, 0, out)
+        self.assertEqual(fake.writes[0][3:5], bytes([6, 0]))
+
+    def test_every_printed_restore_command_is_accepted(self):
+        import re
+        for pid in (0x0266, 0x02CF, 0x02E6):
+            _, fam, _ = rs.MODELS[pid]
+            rng = rs.write_range(pid)
+            for thr_l in range(rng[0], rng[1] + 1, 7):
+                for thr_h in sorted({fam.min_release, (fam.min_release + thr_l - fam.min_release_gap) // 2, thr_l - fam.min_release_gap}):
+                    fake = FakeHid(pid=pid, mode=0)
+                    fake.store[(0, 127)] = [0, 127, 0, thr_l, thr_h, 2, 2, 0, 4]
+                    cmd = rs._restore_command(fam, rs.KeyAssignment(0, 127, 0, thr_l, thr_h, 2, b"\x00\x04"))
+                    argv = cmd.split()[2:]
+                    fake.store[(0, 127)] = [0, 127, 0, 77 if thr_l != 77 else 78, 5, 2, 2, 0, 4]
+                    code, out = self.run_cli(fake, argv + ["--yes"])
+                    self.assertEqual(code, 0, (pid, thr_l, thr_h, cmd, out))
+                    self.assertEqual(fake.writes[-1][3:5], bytes([thr_l, thr_h]), (pid, cmd))
+        self.assertEqual(rs.mm_exact(rs.V2, 144), "2.686")  # 2.69 sits exactly on a half unit
+
+    def test_unknown_mode_byte_asks(self):
+        for mode in (1, 2):
+            fake = FakeHid(mode=mode)
+            code, out = self.run_cli(fake, ["set-key", "--mm", "2.0"], answers=["n"])
+            self.assertIn("Could not read the device mode", out)
+            self.assertEqual(fake.writes, [])
+
+    def test_zero_original_asks_before_anything_else(self):
+        fake = FakeHid(pid=0x0266, mode=0)
+        fake.store[(1, 31)] = [1, 31, 0, 0, 0, 2, 2, 0, 4]  # what Synapse stores on V2
+        code, out = self.run_cli(fake, ["set-key", "--key", "A", "--profile", "1", "--mm", "2.0"], answers=["n"])
+        self.assertIn("cannot write these original values back", out)
+        self.assertNotIn("flash slot", out.split("cannot write")[0].split("before:")[0])
+        self.assertEqual(code, "aborted, nothing written")
+        self.assertEqual(fake.writes, [])
+
+    def test_changed_between_read_and_write_is_refused(self):
+        fake = FakeHid(mode=3)
+        code, out = self.run_cli(fake, ["set-key", "--mm", "2.0"], answers=["y"])
+        self.assertEqual(code, 0, out)  # unchanged while asking: written
+
+        fake = FakeHid(mode=3)
+
+        def synapse_changes_it(q):
+            fake.store[(0, 127)] = [0, 127, 0, 100, 90, 2, 2, 0, 4]
+
+        code, out = self.run_cli(fake, ["set-key", "--mm", "2.0"], answers=["y"], on_ask=synapse_changes_it)
+        self.assertIn("changed since it was read", str(code))
         self.assertEqual(fake.writes, [])
 
     def test_nan_rejected(self):

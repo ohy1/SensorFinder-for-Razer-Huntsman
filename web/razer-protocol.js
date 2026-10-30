@@ -28,7 +28,9 @@
       rawMax: 0xff,
       rawToMm: (raw) => 1.5 + (raw / 255) * 2.1,
       thresholdToMm: (t) => 1.5 + (t / 255) * 2.1,
+      mmToUnits: (mm) => ((mm - 1.5) / 2.1) * 255, // unrounded, unclamped threshold units
       mmToThreshold: (mm) => clamp(Math.round(((mm - 1.5) / 2.1) * 255), 0, 255),
+      mmToRelease: (mm) => (mm <= 0 ? 0 : clamp(Math.round(((mm - 1.5) / 2.1) * 255), 0, 255)),
       thresholdToRaw: (t) => t, // depth and thresholds share one byte scale
       mmToRaw: (mm) => ((mm - 1.5) / 2.1) * 255,
       gridMm: [1.5, 2, 2.5, 3, 3.5],
@@ -43,7 +45,10 @@
       rawMax: 0xffff,
       rawToMm: (raw) => raw / 16380,
       thresholdToMm: (t) => (t * 256) / 16380,
+      mmToUnits: (mm) => (mm * 16380) / 256,
       mmToThreshold: (mm) => clamp(Math.round((mm * 16380) / 256), 1, 255),
+      // A release of 0 is valid (the input ends only at rest); actuation 0 would mean "always on".
+      mmToRelease: (mm) => (mm <= 0 ? 0 : clamp(Math.round((mm * 16380) / 256), 0, 255)),
       thresholdToRaw: (t) => t * 256, // threshold is the high byte of the u16 depth
       mmToRaw: (mm) => mm * 16380,
       gridMm: [0, 1, 2, 3, 4],
@@ -78,6 +83,19 @@
     let [lo, hi] = f.thrRange;
     if (m.maxMm) hi = Math.min(hi, f.mmToThreshold(m.maxMm));
     return { lo, hi };
+  }
+
+  /**
+   * The shortest mm text (at least `minDigits` decimals) that converts back to exactly `thr`,
+   * never one sitting on a half-unit tie, where JS and Python would round differently.
+   */
+  function mmExact(f, thr, minDigits = 1) {
+    const mm = f.thresholdToMm(thr);
+    for (let d = minDigits; d <= 4; d++) {
+      const text = mm.toFixed(d);
+      if (Math.abs(f.mmToUnits(Number(text)) - thr) < 0.499) return text;
+    }
+    return mm.toFixed(5);
   }
 
   // fwID = AT-101 positional key number used by Razer firmware.
@@ -213,23 +231,37 @@
 
     reset() {
       // Keys held right now continue after the reset, but their start was not seen: they must
-      // not be judged as "not registered".
+      // not be judged as "not registered". An input that is on stays on, as it does in the
+      // firmware, without counting as a new activation.
       this.carried = new Set(this.live ? this.live.keys() : []);
+      const on = this.active ? [...this.active.keys()].filter((id) => this.carried.has(id)) : [];
+      this.carriedOn = new Set(on);
       this.live = new Map(); // id -> raw
       // id -> {peak, touches, activations, totalMs, firstSeen, lastSeen, judgedTouches, judgedPeak}
       this.stats = new Map();
       this.open = new Map(); // id -> {id, start, peak, activations, firstOnMs, heldMs, judged}
-      this.active = new Map(); // id -> time the input turned on
+      this.active = new Map(on.map((id) => [id, this.lastT])); // id -> time the input turned on
       this.events = []; // finished touches, newest last
       this.history = new Map(); // id -> [[t, raw], ...] for the last historyMs
-      this.onSpans = new Map(); // id -> [[start, end|null], ...] input-on spans, same window
+      // id -> [[start, end|null], ...] input-on spans, same window
+      this.onSpans = new Map(on.map((id) => [id, [[this.lastT, null]]]));
       this.reports = 0;
       this.lastId = null; // most recently touched key
     }
 
     /** `thresholds`: Map or iterable of [id, {press, release}] in raw depth units. */
     setThresholds(thresholds) {
-      this.thresholds = new Map(thresholds);
+      const next = new Map(thresholds);
+      // Verdicts made against a key's old points say nothing about its new ones: judge it afresh.
+      for (const id of new Set([...this.thresholds.keys(), ...next.keys()])) {
+        const a = this.thresholds.get(id), b = next.get(id);
+        if (a && b && a.press === b.press && a.release === b.release) continue;
+        const s = this.stats.get(id);
+        if (s) Object.assign(s, { activations: 0, judgedTouches: 0, judgedPeak: 0 });
+        const o = this.open.get(id);
+        if (o) o.judged = false;
+      }
+      this.thresholds = next;
       // An input that is on for a key whose points are gone can never be released by _judge.
       for (const id of [...this.active.keys()]) {
         if (!this.thresholds.has(id)) this._endInput(id, this.lastT);
@@ -243,7 +275,12 @@
       const current = new Map();
       for (const { id, raw } of keys) if (raw > this.noiseFloor) current.set(id, raw);
       // A key held through a reset that has since been released starts fresh next time.
-      for (const id of [...this.carried]) if (!current.has(id) && !this.open.has(id)) this.carried.delete(id);
+      for (const id of [...this.carried]) {
+        if (!current.has(id) && !this.open.has(id)) {
+          this.carried.delete(id);
+          this.carriedOn.delete(id);
+        }
+      }
       const ids = new Set([...current.keys(), ...this.open.keys(), ...this.active.keys()]);
       const ended = [];
       for (const id of ids) {
@@ -272,6 +309,7 @@
       }
       this.live.clear();
       this.carried.clear();
+      this.carriedOn.clear();
     }
 
     _touch(id, raw, t) {
@@ -288,7 +326,9 @@
         // Judged only if the points were known from the start of the touch and its start was seen.
         const carried = this.carried.has(id);
         const judged = this.thresholds.has(id) && !carried;
-        o = { id, start: t, peak: 0, activations: 0, firstOnMs: null, heldMs: 0, judged, carried };
+        // carriedOn: the input was already on when this touch was picked up after a reset.
+        o = { id, start: t, peak: 0, activations: 0, firstOnMs: null, heldMs: 0, judged, carried, carriedOn: this.carriedOn.has(id) };
+        this.carriedOn.delete(id);
         this.open.set(id, o);
         s.touches++;
         if (judged) s.judgedTouches++;
@@ -354,9 +394,11 @@
       const ev = {
         id, start: o.start, end: t, durationMs: t - o.start, peak: o.peak,
         // true when an input was seen; false only for a fully judged touch; otherwise unknown.
-        fired: o.activations > 0 ? true : judged && !interrupted ? false : null,
+        fired: o.activations > 0 || o.carriedOn ? true : judged && !interrupted ? false : null,
         activations: o.activations, firstOnMs: o.firstOnMs, heldMs: o.heldMs,
         marginRaw: judged ? thr.press - o.peak : null,
+        // The points in effect when the touch ended, for exports.
+        press: thr ? thr.press : null, release: thr ? thr.release : null,
         interrupted,
       };
       this.stats.get(id).totalMs += ev.durationMs;
@@ -517,6 +559,6 @@
     keyName, shortKeyName, layoutKeys, familyOf, parseDepthReport, DepthTracker,
     PACKET_LEN, TRANSACTION_ID, KEY_ASSIGNMENT, ACTIVE_PROFILE, buildPacket, crc, parseReply,
     getKeyAssignmentPacket, parseKeyAssignment, setKeyAssignmentPacket, withActuation, hex,
-    DEVICE_MODE, getDeviceModePacket, ALLOWED_COMMANDS, SafetyError, checkPacket, writeRange,
+    DEVICE_MODE, getDeviceModePacket, ALLOWED_COMMANDS, SafetyError, checkPacket, writeRange, mmExact,
   };
 });

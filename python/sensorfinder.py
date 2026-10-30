@@ -56,6 +56,13 @@ class Family:
         # V2 accepts 0; on V3 threshold 0 would mean "pressed at rest".
         return max(0 if self.entry_size == 2 else 1, min(255, t))
 
+    def mm_to_release(self, mm: float) -> int:
+        """Release threshold: like mm_to_threshold, but 0 stays possible on V3 (released only at rest)."""
+        if mm <= 0:
+            return 0
+        u = self.mm_to_units(mm)
+        return 255 if not math.isfinite(u) else max(0, min(255, round(u)))
+
 
 # V2: report 07, [fwID, depth:u8], 0..255 = 1.5..3.6 mm; the firmware clamps actuation to 15..250
 #     (about 1.62-3.56 mm) and release to >= 5 and <= actuation - 10.
@@ -211,6 +218,7 @@ ALLOWED_COMMANDS = {
     (0x05, 0x84): "read active profile",
     (0x00, 0x84): "read device mode",
 }
+MODE_HARDWARE = 0x00
 MODE_DRIVER = 0x03
 
 
@@ -372,9 +380,10 @@ class Control:
     def driver_mode(self) -> bool | None:
         """True while Synapse runs (driver mode), False in hardware mode, None if the keyboard does not say."""
         try:
-            return self.exchange(build_packet(0x00, 0x84, 2))[0] == MODE_DRIVER
+            mode = self.exchange(build_packet(0x00, 0x84, 2))[0]
         except SystemExit:
             return None
+        return {MODE_DRIVER: True, MODE_HARDWARE: False}.get(mode)  # any other byte: unknown
 
     def read_key(self, profile: int, key: int) -> KeyAssignment:
         # Another program (Synapse) may be using the channel: only accept the reply we asked for.
@@ -515,17 +524,29 @@ def confirm(question: str) -> bool:
 
 
 def mm_exact(family: Family, thr: int) -> str:
-    """The shortest mm text that converts back to exactly `thr`."""
+    """The shortest mm text that converts back to exactly `thr`, never on a half-unit tie."""
     mm = family.threshold_to_mm(thr)
     for digits in (2, 3, 4):
-        if family.mm_to_threshold(round(mm, digits)) == thr:
-            return f"{mm:.{digits}f}"
+        text = f"{mm:.{digits}f}"
+        if abs(family.mm_to_units(float(text)) - thr) < 0.499:
+            return text
     return f"{mm:.5f}"
+
+
+def mm_in_range(family: Family, rng: tuple[int, int], mm: float) -> bool:
+    """Whether a typed actuation converts into `rng` without being clamped there.
+
+    Accepts the printed bounds themselves (V3 prints 4.0 although 255 is 3.985 mm) and anything
+    whose unrounded units fall inside the range.
+    """
+    units = family.mm_to_units(mm)
+    printed = float(mm_bound(family, rng, rng[0])) <= mm <= float(mm_bound(family, rng, rng[1]))
+    return printed or rng[0] - 0.5 < units < rng[1] + 0.5
 
 
 def _restore_command(family: Family, a: KeyAssignment) -> str:
     if a.thr_l == 0 and a.thr_h == 0:
-        return "(0/0 = decided by Synapse/host: re-apply the profile in Razer Synapse)"
+        return "(0/0 = decided by Synapse/host: this tool cannot write it back; re-apply the profile in Razer Synapse)"
     # The explicit slot number, so it restores the same slot even if the active one changes.
     return (
         f"python sensorfinder.py set-key --key {a.key} --profile {a.profile} "
@@ -537,22 +558,35 @@ def cmd_set_key(args):
     name, family, rng, ctl, profile = _control(args)
     if not math.isfinite(args.mm) or (args.release_mm is not None and not math.isfinite(args.release_mm)):
         raise SystemExit("--mm and --release-mm must be numbers")
-    # Check the unrounded value first: out-of-range input must not be clamped into range.
-    units = family.mm_to_units(args.mm)
-    if not rng[0] - 0.5 <= units < rng[1] + 0.5:
+    # Out-of-range input must be refused, not clamped into range.
+    thr_l = family.mm_to_threshold(args.mm)
+    if not mm_in_range(family, rng, args.mm) or not rng[0] <= thr_l <= rng[1]:
         lo_mm, hi_mm = mm_bound(family, rng, rng[0]), mm_bound(family, rng, rng[1])
         raise SystemExit(f"--mm must be within {lo_mm}..{hi_mm} for the {name}")
-    thr_l = family.mm_to_threshold(args.mm)
     key = key_id(args.key)
     thr_h = None
     if args.release_mm is not None:
-        rel_units = 0 if args.release_mm <= 0 else family.mm_to_units(args.release_mm)
-        if rel_units < family.min_release - 0.5:
-            floor = math.ceil(family.threshold_to_mm(family.min_release) * 100) / 100
-            raise SystemExit(f"--release-mm cannot be shallower than {floor:.2f} mm on the {name} (firmware limit)")
-        if rel_units >= thr_l - family.min_release_gap + 0.5:
+        # Checked after converting: the value written is what has to be valid.
+        thr_h = family.mm_to_release(args.release_mm)
+        if thr_h < family.min_release:
+            floor = mm_exact(family, family.min_release)
+            raise SystemExit(f"--release-mm cannot be shallower than {floor} mm on the {name} (firmware limit)")
+        if thr_h > thr_l - family.min_release_gap:
             raise SystemExit("--release-mm must be at least 0.1 mm shallower than --mm")
-        thr_h = 0 if args.release_mm <= 0 else family.mm_to_threshold(args.release_mm)
+
+    before = ctl.read_key(profile, key)
+    # Shown before anything is asked or written, so the original values are known whatever happens.
+    print("before:", _describe(family, before))
+    print("  to restore it:", _restore_command(family, before))
+    restorable = not (before.thr_l == 0 and before.thr_h == 0)
+    try:
+        check_packet(build_packet(0x02, 0x12, 80, before.to_args()), family, rng)
+    except SafetyError:
+        restorable = False
+    if not restorable:
+        print("note: set-key cannot write these original values back; re-applying the profile in Razer Synapse restores them.")
+        if not args.yes and not confirm("continue anyway? [y/N] "):
+            raise SystemExit("aborted, nothing written")
 
     mode = ctl.driver_mode()
     if mode is not False:
@@ -565,17 +599,11 @@ def cmd_set_key(args):
     if profile != 0 and not args.yes and not confirm(f"write to flash slot {profile}? [y/N] "):
         raise SystemExit("aborted, nothing written")
 
-    before = ctl.read_key(profile, key)
-    # Shown before writing, so the original values are known even if something fails later.
-    print("before:", _describe(family, before))
-    print("  to restore it:", _restore_command(family, before))
-    try:
-        check_packet(build_packet(0x02, 0x12, 80, before.to_args()), family, rng)
-    except SafetyError:
-        print("note: these original values are outside this tool's range, so the command above will be refused;")
-        print("      re-applying the profile in Razer Synapse restores them.")
-        if not args.yes and not confirm("continue anyway? [y/N] "):
-            raise SystemExit("aborted, nothing written")
+    # The questions took time: write only if the key still holds what was shown.
+    now = ctl.read_key(profile, key)
+    if now != before:
+        print("now:   ", _describe(family, now))
+        raise SystemExit("the key changed since it was read (Synapse?); nothing written")
     wanted = before.with_actuation(thr_l, thr_h, family.min_release_gap, family.min_release)
     if (wanted.thr_l, wanted.thr_h) == (before.thr_l, before.thr_h):
         print("already set, nothing written")

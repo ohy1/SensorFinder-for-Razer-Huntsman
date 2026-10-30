@@ -137,7 +137,7 @@
       </p>
       <div class="kb-wrap"><div id="kb" class="kb"></div></div>
       <div id="extraKeys" class="row hidden" style="margin-top: 8px"></div>
-      <div id="noStream" class="note hidden" data-i18n-html="noStreamHtml"></div>
+      <div id="noStream" class="note hidden"></div>
     </div>
 
     <div class="panel">
@@ -247,14 +247,17 @@ const state = {
   dirty: true,
   wallOffset: Date.now() - performance.now(),
   streamSeen: false,
+  unrecognized: 0,     // reports from an unknown model in a format this page cannot read
   thresholds: new Map(),  // fwID -> {thrL, thrH} in threshold units
   chartKey: null,
-  undo: null,          // {productId, profile, key, thrL, thrH, pending} replaced by the last write
+  // {productId, profile, key, thrL, thrH, wroteL, wroteH, pending, at, device} replaced by the last
+  // write; `device` (the HIDDevice written to) is never stored, so a restored record has none.
+  undo: null,
   thrMsg: ['thrNotLoaded', null, []], // [string key, () => vars, extras], re-rendered on language change
   thrProfile: undefined, // profile the monitor's points were loaded from
   lostDevice: false,
   busy: false,         // a read/write/undo/load is talking to the keyboard
-  lastRead: null,      // exact values behind the pre-filled mm fields
+  lastRead: null,      // exact values behind the pre-filled mm fields, and the device they came from
   mode: null,          // last device mode read with 00:84 (0 hardware, 3 driver)
   ramEdited: false,    // a RAM write changed the monitor's points; RAM reverts on replug
   thrPartial: false,   // the loaded points miss keys that could not be read
@@ -581,6 +584,52 @@ function saveThresholds(profile) {
   } catch (err) { /* storage unavailable: thresholds just won't survive a reload */ }
 }
 
+/** Updates one key in the saved set if that set was loaded from `profile` (flash keeps writes). */
+function patchSavedThreshold(profile, key, v) {
+  try {
+    const saved = JSON.parse(localStorage.getItem(thresholdStoreKey()) || 'null');
+    if (!saved || saved.profile !== profile || !saved.keys || typeof saved.keys !== 'object' || Array.isArray(saved.keys)) return;
+    if (v.thrL > 0) saved.keys[key] = [v.thrL, v.thrH];
+    else delete saved.keys[key];
+    localStorage.setItem(thresholdStoreKey(), JSON.stringify(saved));
+  } catch (err) { /* storage unavailable */ }
+}
+
+// RAM written during this plug session, kept per tab so a reload knows the saved points may not
+// match RAM. Cleared on replug (RAM goes back to the active profile) and on a keyboard switch.
+function ramWriteKey() {
+  return `rsf.ramWritten.${state.productId}`;
+}
+
+function ramWritten() {
+  try { return sessionStorage.getItem(ramWriteKey()) === '1'; } catch (err) { return false; }
+}
+
+function setRamWritten(on) {
+  try {
+    if (on) sessionStorage.setItem(ramWriteKey(), '1');
+    else sessionStorage.removeItem(ramWriteKey());
+  } catch (err) { /* only the reload hint is lost */ }
+}
+
+/** RAM went back to the active profile (replug): RAM edits in the monitor's points are void. */
+function ramReverted() {
+  setRamWritten(false);
+  if (!state.ramEdited) return;
+  state.thresholds = new Map();
+  applyThresholds(state.thresholds);
+  state.thrMsg = ['thrNotLoaded', null, []];
+  renderThrStatus();
+  restoreThresholds();
+}
+
+/** Synapse started or quit, and may have re-applied its profile over RAM edits. */
+function modeChanged() {
+  if (!state.ramEdited && !ramWritten()) return;
+  thrStatus('thrModeChanged');
+  $('thrLoad').classList.add('primary');
+}
+
 function hasSavedThresholds() {
   try { return !!localStorage.getItem(thresholdStoreKey()); } catch (err) { return false; }
 }
@@ -600,7 +649,8 @@ function restoreThresholds() {
     state.ramEdited = false;
     state.thrProfile = Number.isInteger(saved.profile) ? saved.profile : 0;
     const when = Number(saved.savedAt) || 0;
-    thrStatus('thrCached', () => ({ p: state.thrProfile, date: new Date(when).toLocaleString(I18N.locale()) }));
+    thrStatus('thrCached', () => ({ p: state.thrProfile, date: new Date(when).toLocaleString(I18N.locale()) }),
+      ramWritten() ? [['thrRamWritten', null]] : []);
   } catch (err) { /* ignore unreadable cache */ }
 }
 
@@ -646,20 +696,23 @@ async function loadThresholds() {
       gone();
       const failed = pending.length;
       if (!map.size) {
-        if (zero && !failed && !refused) throw new Error(tr('errAllZero'));
-        throw new Error(tr('errNoneRead', { n: failed + refused, err: lastErr ? lastErr.message || lastErr : '-' }));
+        // Keys the board refused (no such key, e.g. 한자/한영 on ANSI) do not hide an all-zero profile.
+        if (zero && !failed) throw new Error(tr('errAllZero'));
+        throw new Error(tr('errNoneRead', { n: failed || refused, err: lastErr ? lastErr.message || lastErr : '-' }));
       }
       applyThresholds(map);
       state.thrProfile = profile;
       state.thrPartial = failed > 0;
-      state.ramEdited = false;
+      // RAM read after a RAM write this session holds values that revert on replug: use, never save.
+      state.ramEdited = profile === 0 && (state.ramEdited || ramWritten());
       // A load with read failures is used for now but does not replace an earlier saved set.
-      const save = !failed || !hasSavedThresholds();
+      const save = !state.ramEdited && (!failed || !hasSavedThresholds());
       if (save) saveThresholds(profile);
       const time = hms(new Date());
       const extras = [];
       if (zero + refused) extras.push(['thrSkipped', { n: zero + refused }]);
       if (failed) extras.push([save ? 'thrFailedKeysSaved' : 'thrFailedKeys', { n: failed }]);
+      if (state.ramEdited) extras.push(['thrRamNotSaved', null]);
       if (fellBack) extras.push(['thrFellBack', null]);
       thrStatus('thrLoaded', () => ({ p: profile === 0 ? '0 (RAM)' : profile, n: map.size, time }), extras);
     } catch (err) {
@@ -681,6 +734,7 @@ function onInputReport(e) {
   const family = state.family || P.familyOf(state.productId, e.reportId);
   state.rawLog.push(`#${e.reportId.toString(16).padStart(2, '0')}  ${P.hex(bytes)}`);
   if (state.rawLog.length > 20) state.rawLog.shift();
+  if (!family) state.unrecognized++;
   if (!family || e.reportId !== P.FAMILIES[family].depthReportId) { state.dirty = true; return; }
   if (state.family !== family) {
     // Unknown model: the family was just learned from its depth report; points in device units
@@ -689,6 +743,7 @@ function onInputReport(e) {
     if (state.thresholds.size) applyThresholds(state.thresholds);
     fillActuationRange();
   }
+  if (state.mode === P.DEVICE_MODE.hardware) modeChanged(); // Synapse is back
   state.mode = P.DEVICE_MODE.driver; // the depth stream only flows in driver mode
   if (!state.streamSeen) {
     state.streamSeen = true;
@@ -697,6 +752,13 @@ function onInputReport(e) {
   }
   state.tracker.update(P.parseDepthReport(family, bytes), e.timeStamp || performance.now());
   state.dirty = true;
+}
+
+/** Shown when no depth data arrived a few seconds after connecting. */
+function renderNoStream() {
+  // An unknown model whose reports are not the V3 depth format sends data this page cannot read.
+  $('noStream').innerHTML = tr(state.unrecognized ? 'noStreamUnknownHtml' : 'noStreamHtml');
+  $('noStream').classList.remove('hidden');
 }
 
 function renderModeHint() {
@@ -731,13 +793,15 @@ function pickKeyboard(devices) {
   return byPid.get(known !== undefined ? known : [...byPid.keys()][0]);
 }
 
-async function releaseDevices() {
-  for (const d of state.devices) {
-    d.removeEventListener('inputreport', onInputReport);
-    try { await d.close(); } catch (err) { /* already gone */ }
-  }
+/** Lets go of every attached interface except `keep`; the state changes before anything awaits. */
+function releaseDevices(keep = []) {
+  const old = state.devices;
   state.devices = [];
   state.control = null;
+  for (const d of old) {
+    d.removeEventListener('inputreport', onInputReport);
+    if (!keep.includes(d)) d.close().catch(() => { /* already gone */ });
+  }
 }
 
 /** Forgets everything that belonged to the previous keyboard. */
@@ -756,6 +820,7 @@ function resetBoardState() {
   state.lastRead = null;
   state.mode = null;
   state.streamSeen = false;
+  state.unrecognized = 0;
   state.chartKey = null;
   currentAssignment = null;
   $('actInfo').classList.add('hidden');
@@ -796,11 +861,12 @@ async function attachNow(devices, user) {
   if (!group.length) return;
   const pid = group[0].productId;
   if (!user && (state.productId !== null ? pid !== state.productId : !P.MODELS[pid])) return;
+  // The chooser returns one physical keyboard: anything else attached (another model, or another
+  // unit of this one) is let go, so reads and writes can only reach the keyboard that was picked.
+  const isSwitch = () => pid !== state.productId
+    || (user && !state.lostDevice && state.devices.some((d) => !group.includes(d)));
   // Never switch keyboards under a running read/write/undo/load.
-  // Same model but none of the picked interfaces belong to the current keyboard: another unit.
-  const switching = pid !== state.productId
-    || (user && state.devices.length > 0 && !state.lostDevice && !group.some((d) => state.devices.includes(d)));
-  if (state.busy && switching) {
+  if (state.busy && isSwitch()) {
     if (user) throw new Error(tr('errBusySwitch'));
     return;
   }
@@ -814,18 +880,22 @@ async function attachNow(devices, user) {
     }
   }
   if (!opened.length) return;
+  // Opening took time: an operation may have started meanwhile.
+  const switching = isSwitch();
+  if (state.busy && switching) {
+    for (const d of opened) if (!state.devices.includes(d)) d.close().catch(() => {});
+    if (user) throw new Error(tr('errBusySwitch'));
+    return;
+  }
+  // Another unit of the same model: nothing recorded for the previous one applies to it.
+  const otherUnit = switching && pid === state.productId;
   if (switching) {
-    // A different model, or another physical keyboard of the same model picked in the chooser.
-    await releaseDevices();
+    releaseDevices(opened);
     state.productId = pid;
     resetBoardState();
-  } else if (state.lostDevice && state.ramEdited) {
-    // Replugged: RAM went back to the active profile, so RAM edits in the monitor are void.
-    state.thresholds = new Map();
-    applyThresholds(state.thresholds);
-    state.thrMsg = ['thrNotLoaded', null, []];
-    renderThrStatus();
-    restoreThresholds();
+    if (otherUnit) setRamWritten(false); // that RAM write was on the other unit
+  } else if (state.lostDevice) {
+    ramReverted(); // replugged: RAM went back to the active profile
   }
   for (const d of opened) {
     if (state.devices.includes(d)) continue;
@@ -843,10 +913,10 @@ async function attachNow(devices, user) {
   $('dot').classList.toggle('on', state.devices.length > 0);
   $('connectError').classList.add('hidden');
   fillActuationRange();
-  if (!state.thresholds.size) restoreThresholds();
-  if (!state.undo) restoreUndo();
+  if (!otherUnit && !state.thresholds.size) restoreThresholds();
+  if (!otherUnit && !state.undo) restoreUndo();
   refreshButtons();
-  setTimeout(() => { if (!state.streamSeen && state.devices.length) $('noStream').classList.remove('hidden'); }, 3000);
+  setTimeout(() => { if (!state.streamSeen && state.devices.length) renderNoStream(); }, 3000);
 }
 
 async function connect() {
@@ -867,6 +937,7 @@ function onDisconnect(e) {
   e.device.removeEventListener('inputreport', onInputReport);
   state.devices = state.devices.filter((d) => d !== e.device);
   if (state.control === e.device) state.control = null;
+  if (state.lastRead && state.lastRead.device === e.device) state.lastRead = null; // read again after a replug
   state.multiUnit = state.multiUnit && hasDuplicateUnits(state.devices);
   if (!state.devices.length) {
     // Keep the keyboard's identity, points and Undo for a replug; end what was live.
@@ -930,6 +1001,7 @@ async function exchangeNow(packet, device = null) {
           if (reply.status !== 2) {
             const err = new Error(tr('errStatus', { s: reply.statusText }));
             err.status = reply.status; // 03 fail / 05 not supported: the keyboard said no
+            err.args = reply.args; //     ... to the request these args name
             throw err;
           }
           state.control = dev;
@@ -969,10 +1041,19 @@ async function activeProfile() {
   return slot;
 }
 
-async function readKey(profile, key) {
-  let r = null;
+async function readKey(profile, key, device = null) {
+  let r = null, foreign = null;
   for (let attempt = 0; attempt < 5; attempt++) {
-    r = await exchange(P.getKeyAssignmentPacket(profile, key, 0));
+    try {
+      r = await exchange(P.getKeyAssignmentPacket(profile, key, 0), device);
+    } catch (err) {
+      // A refusal naming another key, profile or layer answered another program's request.
+      const x = err.status && err.args && err.args.some((b) => b) ? err.args : null;
+      if (!x || (x[0] === profile && x[1] === key && x[2] === 0)) throw err;
+      foreign = err;
+      await sleep(20);
+      continue;
+    }
     const a = P.parseKeyAssignment(r.args);
     // Another program may have read a different key in between: ask again.
     // Layer too: Synapse may read the same key's Hypershift layer, and writing that reply back
@@ -980,7 +1061,8 @@ async function readKey(profile, key) {
     if (a && a.key === key && a.profile === profile && a.layer === 0) return a;
     await sleep(20);
   }
-  throw new Error(tr('errKeyReply', { hex: P.hex(r.args.slice(0, 12)) }));
+  // Not a status error: the key is retried, never counted as one the board refused.
+  throw new Error(r ? tr('errKeyReply', { hex: P.hex(r.args.slice(0, 12)) }) : foreign.message);
 }
 
 function showAssignment(a) {
@@ -1051,7 +1133,8 @@ async function onRead() {
       $('actMm').value = mmL;
       $('actRelMm').value = mmH;
       // Remember the exact values so an untouched field writes back what was read, not a rounded value.
-      state.lastRead = { productId: state.productId, key, sel, profile, thrL: currentAssignment.thrL, thrH: currentAssignment.thrH, mmL, mmH };
+      state.lastRead = { productId: state.productId, device: state.control, key, sel, profile,
+        thrL: currentAssignment.thrL, thrH: currentAssignment.thrH, mmL, mmH };
       actLog(tr('readOk', { key: keyName(key), p: profile }));
     } catch (err) {
       actLog(tr('readFail', { err: err.message || err }));
@@ -1065,7 +1148,15 @@ function wantedPoints(f, range, key, profile) {
   const loMm = mmBound(f, range, range.lo), hiMm = mmBound(f, range, range.hi);
   const mmStr = $('actMm').value.trim();
   const mmNum = Number(mmStr);
-  const thrL = lr && mmStr === lr.mmL ? lr.thrL : mmStr !== '' && Number.isFinite(mmNum) ? f.mmToThreshold(mmNum) : NaN;
+  let thrL = NaN;
+  if (lr && mmStr === lr.mmL) thrL = lr.thrL;
+  else if (mmStr !== '' && Number.isFinite(mmNum)) {
+    // Out-of-range input is refused, not clamped into range. The printed bounds themselves are
+    // accepted (V3 prints 4.0 although its threshold 255 is 3.985 mm).
+    const units = f.mmToUnits(mmNum);
+    const inRange = (mmNum >= Number(loMm) && mmNum <= Number(hiMm)) || (units > range.lo - 0.5 && units < range.hi + 0.5);
+    if (inRange) thrL = f.mmToThreshold(mmNum);
+  }
   if (!(thrL >= range.lo && thrL <= range.hi)) throw new Error(tr('errRange', { lo: loMm, hi: hiMm }));
   const relStr = $('actRelMm').value.trim();
   let thrH = null;
@@ -1073,7 +1164,7 @@ function wantedPoints(f, range, key, profile) {
     // (An untouched release below the firmware floor, e.g. V2's 0/0 from Synapse, means "keep":
     // withActuation lifts it to the floor.)
     const rel = Number(relStr);
-    thrH = lr && relStr === lr.mmH ? lr.thrH : Number.isFinite(rel) ? (rel <= 0 ? 0 : f.mmToThreshold(rel)) : NaN;
+    thrH = lr && relStr === lr.mmH ? lr.thrH : Number.isFinite(rel) ? f.mmToRelease(rel) : NaN;
     if (thrH < f.minRelease) throw new Error(tr('errReleaseFloor', { floor: releaseFloorMm(f) }));
     if (!(thrH <= thrL - f.minReleaseGap)) {
       throw new Error(tr('errRelease', { mm: f.thresholdToMm(thrL).toFixed(2) }));
@@ -1082,11 +1173,9 @@ function wantedPoints(f, range, key, profile) {
   return { thrL, thrH };
 }
 
-/** Shallowest release a user can type that the firmware keeps (V2: threshold 5). */
+/** Shallowest release the firmware keeps (V2: threshold 5, typed as 1.54). */
 function releaseFloorMm(f) {
-  if (!f.minRelease) return '0';
-  const mm = Math.ceil(f.thresholdToMm(f.minRelease) * 100) / 100;
-  return mm.toFixed(2);
+  return f.minRelease ? P.mmExact(f, f.minRelease) : '0';
 }
 
 /** Device mode before a write: 'driver' (Synapse), 'hardware', or 'unknown'. */
@@ -1094,8 +1183,10 @@ async function deviceMode() {
   try {
     const r = await exchange(P.getDeviceModePacket());
     if (r.args[0] === P.DEVICE_MODE.hardware) {
+      if (state.mode === P.DEVICE_MODE.driver) modeChanged(); // Synapse quit
       state.mode = P.DEVICE_MODE.hardware;
-      if (state.streamSeen) state.tracker.interrupt(performance.now()); // the stream has stopped
+      // The stream stopped some time after its last report; end what was live there.
+      if (state.streamSeen) state.tracker.interrupt(state.tracker.lastT);
       state.streamSeen = false;
       renderModeHint();
       state.dirty = true;
@@ -1130,12 +1221,14 @@ async function onWrite() {
       const { thrL, thrH } = wantedPoints(f, range, key, profile);
       const lr = freshRead(key, profile);
       if (!lr) throw new Error(tr('errChangedSinceRead'));
+      // Everything below goes to the keyboard the fields were read from, or nowhere.
+      const device = lr.device;
+      if (!device || !state.devices.includes(device)) throw new Error(tr('errDeviceChanged'));
       if (!(await confirmMode())) return;
       if (profile !== 0 && !confirm(tr('confirmFlash', { p: profile }))) return;
 
       sameBoard(pid);
-      const before = await readKey(profile, key); // always start from the device's current value
-      const device = state.control;
+      const before = await readKey(profile, key, device); // always start from the device's current value
       // The fields were filled from an earlier read; refuse if the key changed since then.
       if (before.thrL !== lr.thrL || before.thrH !== lr.thrH) throw new Error(tr('errChangedSinceRead'));
       const wanted = P.withActuation(before, thrL, thrH, f.minReleaseGap, f.minRelease);
@@ -1157,15 +1250,17 @@ async function onWrite() {
         // An earlier unconfirmed write to the same key keeps the true original values.
         const prev = state.undo;
         const same = prev && prev.pending && prev.productId === pid && prev.profile === profile && prev.key === key;
+        // Originals carried over from a record made on another connection may be another unit's.
         setUndo({ productId: pid, profile, key, thrL: same ? prev.thrL : before.thrL, thrH: same ? prev.thrH : before.thrH,
-          wroteL: wanted.thrL, wroteH: wanted.thrH, pending: true });
+          wroteL: wanted.thrL, wroteH: wanted.thrH, pending: true, at: Date.now(),
+          device: same && prev.device !== device ? null : device });
       } else {
         setUndo(null); // Undo must never point at an older write than the last one
       }
       sameBoard(pid);
       sent = true;
       await exchange(P.setKeyAssignmentPacket(wanted), device);
-      const after = await readKey(profile, key);
+      const after = await readKey(profile, key, device);
       if (undoable && state.undo) setUndo({ ...state.undo, pending: false });
       currentAssignment = after;
       showAssignment(after);
@@ -1181,8 +1276,10 @@ async function onWrite() {
   });
 }
 
-/** Keeps the monitor's points in step with a write that hit the profile they were loaded from. */
+/** Keeps the monitor's points (and the saved copy) in step with a write. */
 function updateMonitorPoints(profile, key, after) {
+  if (profile === 0) setRamWritten(true);
+  else patchSavedThreshold(profile, key, after); // flash keeps it
   if (!state.thresholds.size) return;
   if (profile !== state.thrProfile) {
     thrStatus('thrStale');
@@ -1191,9 +1288,7 @@ function updateMonitorPoints(profile, key, after) {
   if (after.thrL > 0) state.thresholds.set(key, { thrL: after.thrL, thrH: after.thrH });
   else state.thresholds.delete(key); // 0/0: the host decides, nothing to judge against
   applyThresholds(state.thresholds);
-  // RAM reverts on replug, and a partial set must not replace a complete saved one.
-  if (profile === 0) state.ramEdited = true;
-  else if (!state.thrPartial) saveThresholds(state.thrProfile);
+  if (profile === 0) state.ramEdited = true; // reverts on replug, so never saved
 }
 
 const UNDO_KEY = 'rsf.undo.v1';
@@ -1201,8 +1296,10 @@ const UNDO_KEY = 'rsf.undo.v1';
 function setUndo(u) {
   state.undo = u;
   try {
-    if (u) localStorage.setItem(UNDO_KEY, JSON.stringify(u));
-    else localStorage.removeItem(UNDO_KEY);
+    if (u) {
+      const { device, ...stored } = u; // a device lives only as long as this page
+      localStorage.setItem(UNDO_KEY, JSON.stringify(stored));
+    } else localStorage.removeItem(UNDO_KEY);
   } catch (err) { /* Undo just won't survive a reload */ }
   renderUndo();
 }
@@ -1214,8 +1311,10 @@ function restoreUndo() {
     const byte = (v) => Number.isInteger(v) && v >= 0 && v <= 255;
     if (u && u.productId === state.productId && Number.isInteger(u.profile) && u.profile >= 0 && u.profile <= 6
         && P.KEY_NAMES[u.key] && byte(u.thrL) && byte(u.thrH)) {
-      state.undo = { productId: u.productId, profile: u.profile, key: u.key, thrL: u.thrL, thrH: u.thrH, pending: !!u.pending };
+      // No device: which keyboard it was made on is unknown now, so Undo asks before writing.
+      state.undo = { productId: u.productId, profile: u.profile, key: u.key, thrL: u.thrL, thrH: u.thrH, pending: !!u.pending, device: null };
       if (byte(u.wroteL) && byte(u.wroteH)) Object.assign(state.undo, { wroteL: u.wroteL, wroteH: u.wroteH });
+      if (Number.isFinite(u.at)) state.undo.at = u.at;
       renderUndo();
     }
   } catch (err) { /* ignore unreadable record */ }
@@ -1248,17 +1347,21 @@ async function onUndo() {
       const now = await readKey(u.profile, u.key);
       const device = state.control;
       if (now.thrL !== u.thrL || now.thrH !== u.thrH) {
-        // Not what this tool wrote: another keyboard of the same model, or changed since.
+        const f = fam();
+        const mmOf = (t) => f.thresholdToMm(t).toFixed(2);
         if (u.wroteL !== undefined && (now.thrL !== u.wroteL || now.thrH !== u.wroteH)) {
-          const f = fam();
-          const mmOf = (t) => f.thresholdToMm(t).toFixed(2);
+          // Not what this tool wrote: another keyboard of the same model, or changed since.
           if (!confirm(tr('confirmUndoChanged', { cur: `${mmOf(now.thrL)} / ${mmOf(now.thrH)}`, wrote: `${mmOf(u.wroteL)} / ${mmOf(u.wroteH)}` }))) return;
+        } else if (u.device !== device) {
+          // Recorded before a reload or reconnect: the same value on another unit looks identical.
+          const when = u.at ? new Date(u.at).toLocaleString(I18N.locale()) : '?';
+          if (!confirm(tr('confirmUndoUnit', { when, key: keyName(u.key), a: mmOf(u.thrL), b: mmOf(u.thrH) }))) return;
         }
         sameBoard(pid);
         sent = true;
         await exchange(P.setKeyAssignmentPacket({ ...now, thrL: u.thrL, thrH: u.thrH }), device);
       }
-      const after = await readKey(u.profile, u.key);
+      const after = await readKey(u.profile, u.key, device);
       const ok = after.thrL === u.thrL && after.thrH === u.thrH;
       updateMonitorPoints(u.profile, u.key, after);
       if (currentAssignment && currentAssignment.key === u.key) { currentAssignment = after; showAssignment(after); }
@@ -1291,6 +1394,7 @@ function fillActuationRange() {
   const lo = mmBound(f, range, range.lo), hi = mmBound(f, range, range.hi);
   $('actMm').min = lo;
   $('actMm').max = hi;
+  $('actRelMm').min = releaseFloorMm(f);
   $('actRange').textContent = state.multiUnit ? tr('errMultipleUnits') : tr('rangeNote', { lo, hi });
 }
 
@@ -1318,6 +1422,7 @@ function applyLanguage() {
   renderDevName();
   renderModeHint();
   renderThrStatus();
+  if (!$('noStream').classList.contains('hidden')) renderNoStream();
   if (currentAssignment) showAssignment(currentAssignment);
   renderUndo();
   fillActuationRange();
@@ -1332,10 +1437,9 @@ function exportCsv() {
   const mmOr = (raw) => (raw === null || raw === undefined ? '' : f.rawToMm(raw).toFixed(3));
   const lines = ['type,key,fwID,start_ms,duration_ms,peak_raw,peak_mm,input,activations,first_input_ms,input_held_ms,actuation_mm,release_mm'];
   for (const e of t.events) {
-    const thr = thrRaw(e.id);
     lines.push(['touch', csvCell(keyName(e.id)), e.id, e.start.toFixed(1), e.durationMs.toFixed(1), e.peak, mmOr(e.peak),
       e.fired === null ? '' : e.fired ? 'yes' : 'no', e.activations, e.firstOnMs === null ? '' : e.firstOnMs.toFixed(1),
-      e.heldMs.toFixed(1), thr ? mmOr(thr.press) : '', thr ? mmOr(thr.release) : ''].join(','));
+      e.heldMs.toFixed(1), mmOr(e.press), mmOr(e.release)].join(',')); // the points this touch was judged with
   }
   for (const r of t.ranking()) {
     const thr = thrRaw(r.id);
@@ -1390,9 +1494,15 @@ function init() {
     refreshButtons();
   });
   $('actRelSuggest').addEventListener('click', () => {
-    const mm = Number($('actMm').value);
-    const floor = Number(releaseFloorMm(fam()));
-    if (mm > 0) $('actRelMm').value = Math.max(floor, mm - 0.2).toFixed(floor ? 2 : 1);
+    const f = fam();
+    const text = $('actMm').value.trim();
+    const mm = Number(text);
+    if (!(mm > 0)) return;
+    // 0.2 mm shallower, kept within the firmware's floor and minimum gap.
+    const lr = state.lastRead;
+    const thrL = lr && text === lr.mmL ? lr.thrL : f.mmToThreshold(mm);
+    const thrH = Math.max(f.minRelease, Math.min(f.mmToRelease(mm - 0.2), thrL - f.minReleaseGap));
+    if (thrH <= thrL - f.minReleaseGap) $('actRelMm').value = P.mmExact(f, thrH);
   });
   $('actProfile').addEventListener('change', refreshButtons);
 
@@ -1405,6 +1515,13 @@ function init() {
     // A replugged keyboard that was already allowed comes back by itself.
     navigator.hid.addEventListener('connect', (e) => attach([e.device]));
     navigator.hid.addEventListener('disconnect', onDisconnect);
+    // Coming back to this window is when Synapse has most likely been started or quit.
+    let lastModeCheck = -Infinity;
+    window.addEventListener('focus', () => {
+      if (!state.devices.length || state.busy || performance.now() - lastModeCheck < 5000) return;
+      lastModeCheck = performance.now();
+      deviceMode();
+    });
   }
   requestAnimationFrame(render);
 }
