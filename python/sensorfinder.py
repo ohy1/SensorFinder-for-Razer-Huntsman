@@ -18,6 +18,9 @@ from __future__ import annotations
 import argparse
 import csv
 import math
+import os
+import shlex
+import shutil
 import sys
 import time
 from dataclasses import dataclass, field
@@ -586,27 +589,44 @@ def mm_in_range(family: Family, rng: tuple[int, int], mm: float) -> bool:
     return printed or rng[0] - 0.5 < units < rng[1] + 0.5
 
 
-def _interpreter_name() -> str:
-    """'python3' when run as python3 (where plain 'python' may not exist), else 'python'."""
-    name = (sys.executable or "").replace("\\", "/").rsplit("/", 1)[-1].lower()
-    if name.endswith(".exe"):
+def _interpreter(exe: str, found, windows: bool) -> str:
+    """How to start the interpreter at `exe` from a shell.
+
+    Its plain name (python, python3, ...) when that name finds this very interpreter on PATH
+    (`found` is where it resolves, unresolved symlinks, so a venv is not mistaken for its base);
+    otherwise its path, quoted for the shell when it contains a space.
+    """
+    if not exe:
+        return "python"
+    name = exe.replace("\\", "/").rsplit("/", 1)[-1]
+    if windows and name.lower().endswith(".exe"):
         name = name[:-4]
-    return name if name.startswith("python") and name[6:].replace(".", "").isdigit() and name != "python" else "python"
+    norm = (lambda x: x.replace("\\", "/").lower()) if windows else (lambda x: x)
+    if found and norm(found) == norm(exe):
+        return name
+    if " " not in exe:
+        return exe
+    return f'"{exe}"' if windows else shlex.quote(exe)
 
 
 def _restore_command(family: Family, a: KeyAssignment, pid: int) -> str:
     if a.thr_l == 0 and a.thr_h == 0:
         return "(0/0 = decided by Synapse/host: this tool cannot write it back; re-apply the profile in Razer Synapse)"
     # The explicit model and slot number, so it restores the same slot even if the active one
-    # changes or another model is plugged in; the script path as it was run, so it runs from here.
-    # The script path as it was run, so the line runs from the same directory. The interpreter is
-    # named, not given as a path: a quoted path first on the line breaks PowerShell and Git Bash.
+    # changes or another model is plugged in. The interpreter and script as they were run, so the
+    # line runs as printed from the same directory.
+    windows = os.name == "nt"
+    exe = sys.executable or ""
+    name = exe.replace("\\", "/").rsplit("/", 1)[-1]
+    found = shutil.which(name) if name else None
+    if found:
+        found = os.path.abspath(found)
     script = sys.argv[0] or "sensorfinder.py"
     if " " in script:
-        script = f'"{script}"'  # not the first word, so double quotes work in cmd, PowerShell and sh
+        script = f'"{script}"' if windows else shlex.quote(script)
     return (
-        f"{_interpreter_name()} {script} set-key --pid {pid:04X} --key {a.key} --profile {a.profile} "
-        f"--mm {mm_exact(family, a.thr_l)} --release-mm {mm_exact(family, a.thr_h)}"
+        f"{_interpreter(os.path.abspath(exe) if exe else exe, found, windows)} {script} set-key --pid {pid:04X} "
+        f"--key {a.key} --profile {a.profile} --mm {mm_exact(family, a.thr_l)} --release-mm {mm_exact(family, a.thr_h)}"
     )
 
 
@@ -638,7 +658,10 @@ def cmd_set_key(args):
     before = ctl.read_key(profile, key)
     # Shown before anything is asked or written, so the original values are known whatever happens.
     print("before:", _describe(family, before))
-    print("  to restore it:", _restore_command(family, before, pid))
+    restore = _restore_command(family, before, pid)
+    print("  to restore it:", restore)
+    if restore.startswith('"'):  # a quoted path first on the line runs in cmd; PowerShell needs &
+        print("  (in PowerShell: & " + restore + ")")
     restorable = not (before.thr_l == 0 and before.thr_h == 0)
     try:
         check_packet(build_packet(0x02, 0x12, 80, before.to_args()), family, rng)

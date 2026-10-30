@@ -1326,7 +1326,7 @@ async function onWrite() {
         const pmm = (t) => pm.thresholdToMm(t).toFixed(2);
         const where = prev.profile === 0 ? tr('profRam') : tr('profSlot', { n: prev.profile });
         // Without an Undo of its own, this write deletes the record rather than replacing it.
-        const q = undoable ? 'confirmReplacePending' : 'confirmDropPending';
+        const q = prev.pendingFrom === 'undo' ? 'confirmDropUndoPending' : undoable ? 'confirmReplacePending' : 'confirmDropPending';
         if (!confirm(tr(q, { key: keyName(prev.key), p: where, a: pmm(prev.thrL), b: pmm(prev.thrH) }))) return;
       }
       if (asked) {
@@ -1407,6 +1407,7 @@ function restoreUndo() {
       state.undo = { productId: u.productId, profile: u.profile, key: u.key, thrL: u.thrL, thrH: u.thrH, pending: !!u.pending, device: null };
       if (byte(u.wroteL) && byte(u.wroteH)) Object.assign(state.undo, { wroteL: u.wroteL, wroteH: u.wroteH });
       if (Number.isFinite(u.at)) state.undo.at = u.at;
+      if (u.pendingFrom === 'undo') state.undo.pendingFrom = 'undo';
       renderUndo();
     }
   } catch (err) { /* ignore unreadable record */ }
@@ -1483,7 +1484,7 @@ async function onUndo() {
       actLog(tr(sent ? 'undoUnconfirmed' : 'undoFail', { err: err.message || err }));
       if (sent && state.thresholds.size) thrStatus('thrUnconfirmed');
       // The Undo's own write may or may not have landed: keep it, as unconfirmed.
-      if (sent && state.undo === u) setUndo({ ...u, pending: true });
+      if (sent && state.undo === u) setUndo({ ...u, pending: true, pendingFrom: 'undo' });
     }
   });
 }
